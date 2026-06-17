@@ -1,4 +1,5 @@
 import { valueRatio } from '../core/geometry.js';
+import { m5gfxTextSize } from '../core/m5gfxText.js';
 
 export function exportM5GfxCpp(doc) {
   const lines = [
@@ -43,7 +44,7 @@ function renderElement(element) {
     const datum = p.align === 'center' ? 'middle_center' : p.align === 'right' ? 'middle_right' : 'middle_left';
     const x = p.align === 'center' ? element.x + element.w / 2 : p.align === 'right' ? element.x + element.w - 3 : element.x + 3;
     out.push(`  display.setTextColor(${textColor});`);
-    out.push(`  display.setTextSize(${Math.max(1, Math.round((p.fontSize ?? 12) / 8))});`);
+    out.push(`  display.setTextSize(${m5gfxTextSize(p.fontSize ?? 12)});`);
     out.push(`  display.setTextDatum(${datum});`);
     out.push(`  display.drawString("${escapeCpp(p.text ?? '')}", ${n(x)}, ${n(element.y + element.h / 2)});`);
   }

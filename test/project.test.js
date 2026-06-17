@@ -13,6 +13,7 @@ import {
 } from '../src/core/project.js';
 import { createDocument } from '../src/core/document.js';
 import { parseGlyphSet } from '../src/core/assets.js';
+import { m5gfxTextSize, m5gfxTextWidth } from '../src/core/m5gfxText.js';
 import { parseDesignProject, serializeProject } from '../src/core/storage.js';
 import { exportFirmwareProject } from '../src/exporters/firmware.js';
 import { exportXmlProject } from '../src/exporters/xml.js';
@@ -83,7 +84,13 @@ test('parses glyph ranges and symbols', () => {
   assert.deepEqual(parseGlyphSet('0x20-0x22', 'A'), [0x20, 0x21, 0x22, 0x41]);
 });
 
-test('exports multi-screen M5GFX firmware and LVGL-style XML', async () => {
+test('matches firmware bitmap text sizing', () => {
+  assert.equal(m5gfxTextSize(13), 2);
+  assert.equal(m5gfxTextWidth('MENU', 13), 48);
+  assert.equal(m5gfxTextWidth('pocketsynth v_0.1', 13), 204);
+});
+
+test('exports multi-screen vanilla firmware and LVGL-style XML', async () => {
   let project = createProject();
   project = addScreen(project, 'Settings');
   project = addTransition(project, {
@@ -95,6 +102,7 @@ test('exports multi-screen M5GFX firmware and LVGL-style XML', async () => {
   const firmware = await exportFirmwareProject(project);
   const xml = exportXmlProject(project);
   assert.match(firmware.files['cardputer_ui.h'], /enum CardputerScreenId/);
+  assert.doesNotMatch(firmware.files['cardputer_ui.h'], /M5GFX|LGFX/);
   assert.match(firmware.files['cardputer_ui.cpp'], /CardputerTransition/);
   assert.match(xml.files['project.xml'], /cu:flow/);
   assert.ok(xml.files['screens/main.xml']);

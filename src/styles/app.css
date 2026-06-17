@@ -221,6 +221,11 @@ input[type="color"] {
   cursor: grab;
 }
 
+.element text[data-m5gfx-text-size] {
+  text-rendering: optimizeSpeed;
+  paint-order: stroke fill;
+}
+
 .element:active {
   cursor: grabbing;
 }

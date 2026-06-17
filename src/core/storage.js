@@ -44,7 +44,7 @@ export async function loadProject() {
 }
 
 export function parseDesignProject(raw) {
-  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  const parsed = typeof raw === 'string' ? JSON.parse(raw.replace(/^\uFEFF/, '')) : raw;
   return migrateProject(parsed);
 }
 

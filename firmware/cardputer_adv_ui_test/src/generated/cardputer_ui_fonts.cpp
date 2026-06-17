@@ -25,7 +25,7 @@ static int measure_text(const CardputerGeneratedFont* font, const char* text) {
   return width;
 }
 
-void drawGeneratedText(lgfx::LGFX_Device& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align) {
+void drawGeneratedText(CardputerDisplay& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align) {
   if (!font || !text) return;
   int cursor = x;
   const int total = measure_text(font, text);

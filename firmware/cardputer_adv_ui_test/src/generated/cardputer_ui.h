@@ -1,6 +1,6 @@
 #pragma once
 
-#include <M5GFX.h>
+#include "../cardputer_display.h"
 
 enum CardputerScreenId {
   CARDPUTER_SCREEN_MAIN = 0
@@ -16,7 +16,7 @@ enum CardputerUiEvent {
   CARDPUTER_UI_EVENT_SOFTKEY_RIGHT
 };
 
-void cardputer_ui_init(lgfx::LGFX_Device* display);
+void cardputer_ui_init(CardputerDisplay* display);
 void cardputer_ui_draw(CardputerScreenId screen);
 CardputerScreenId cardputer_ui_handle_event(CardputerScreenId current, CardputerUiEvent event);
 CardputerScreenId cardputer_ui_handle_element_event(CardputerScreenId current, const char* elementId, CardputerUiEvent event);

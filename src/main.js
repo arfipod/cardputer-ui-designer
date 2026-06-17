@@ -24,6 +24,7 @@ import {
 } from './core/project.js';
 import { buildFontVariants, createFontAsset, parseFontSizes } from './core/assets.js';
 import { clamp, snap, svgPoint, valueRatio } from './core/geometry.js';
+import { m5gfxSvgFontSize, m5gfxTextSize, m5gfxTextWidth } from './core/m5gfxText.js';
 import { loadProject, parseDesignProject, saveProject } from './core/storage.js';
 import { exportFirmware, exportJson, exportXml } from './exporters/project.js';
 import { importXmlProject } from './exporters/xml.js';
@@ -448,16 +449,24 @@ function renderElementSvg(element) {
     group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, rx: p.radius ?? 0, fill: p.fill, stroke: p.stroke }));
   }
   if (element.type === 'text' || element.type === 'button') {
+    const firmwareText = !p.fontId;
+    const textValue = p.text ?? '';
+    const firmwareWidth = m5gfxTextWidth(textValue, p.fontSize ?? 12);
     const text = svg('text', {
       x: textX(element),
       y: element.y + element.h / 2,
       fill: p.color ?? '#ffffff',
-      'font-size': p.fontSize ?? 12,
+      'font-size': firmwareText ? m5gfxSvgFontSize(p.fontSize ?? 12) : p.fontSize ?? 12,
       'font-family': fontFamily(p.fontId),
+      'font-weight': firmwareText ? 700 : undefined,
+      'font-smooth': firmwareText ? 'never' : undefined,
+      'textLength': firmwareText && firmwareWidth > 0 ? firmwareWidth : undefined,
+      'lengthAdjust': firmwareText && firmwareWidth > 0 ? 'spacingAndGlyphs' : undefined,
       'text-anchor': anchor(p.align),
       'dominant-baseline': 'middle'
     });
-    text.textContent = p.text ?? '';
+    if (firmwareText) text.dataset.m5gfxTextSize = String(m5gfxTextSize(p.fontSize ?? 12));
+    text.textContent = textValue;
     group.append(text);
   }
   if (element.type === 'line') {
@@ -985,7 +994,7 @@ function readFileAsDataUrl(file) {
 
 function fontFamily(fontId) {
   const font = project.assets.fonts.find((item) => item.id === fontId);
-  return font ? `"${font.family}", sans-serif` : undefined;
+  return font ? `"${font.family}", sans-serif` : '"Courier New", Consolas, monospace';
 }
 
 function svg(tag, attrs = {}) {

@@ -1,5 +1,6 @@
 import { parseGlyphSet, bytesToCppArray } from '../core/assets.js';
 import { valueRatio } from '../core/geometry.js';
+import { m5gfxTextSize } from '../core/m5gfxText.js';
 import { EVENT_TRIGGERS, safeIdentifier } from '../core/project.js';
 
 const EVENT_ENUMS = {
@@ -24,7 +25,7 @@ export async function exportFirmwareProject(project) {
     'platformio/main.cpp.example': exportPlatformIoSnippet(project)
   };
   return {
-    filename: `${safeFilename(project.meta.name)}.m5gfx-firmware.txt`,
+    filename: `${safeFilename(project.meta.name)}.vanilla-firmware.txt`,
     mimeType: 'text/plain',
     files,
     content: bundleFiles(files)
@@ -37,7 +38,7 @@ function exportHeader(project) {
   return [
     '#pragma once',
     '',
-    '#include <M5GFX.h>',
+    '#include "../cardputer_display.h"',
     '',
     'enum CardputerScreenId {',
     screenEnums,
@@ -53,7 +54,7 @@ function exportHeader(project) {
     '  CARDPUTER_UI_EVENT_SOFTKEY_RIGHT',
     '};',
     '',
-    'void cardputer_ui_init(lgfx::LGFX_Device* display);',
+    'void cardputer_ui_init(CardputerDisplay* display);',
     'void cardputer_ui_draw(CardputerScreenId screen);',
     'CardputerScreenId cardputer_ui_handle_event(CardputerScreenId current, CardputerUiEvent event);',
     'CardputerScreenId cardputer_ui_handle_element_event(CardputerScreenId current, const char* elementId, CardputerUiEvent event);',
@@ -67,7 +68,7 @@ function exportSource(project) {
     '#include "cardputer_ui_fonts.h"',
     '#include <string.h>',
     '',
-    'static lgfx::LGFX_Device* ui_display = nullptr;',
+    'static CardputerDisplay* ui_display = nullptr;',
     '',
     'struct CardputerTransition {',
     '  CardputerScreenId from;',
@@ -92,14 +93,14 @@ function exportSource(project) {
     lines.push(`static void draw_${safeIdentifier(screen.slug)}() {`);
     lines.push('  if (!ui_display) return;');
     lines.push('  auto& display = *ui_display;');
-    lines.push('  display.fillScreen(TFT_BLACK);');
+    lines.push('  display.clear(CardputerDisplay::rgb565(0, 0, 0));');
     lines.push('');
     for (const element of screen.elements.filter((item) => item.visible)) lines.push(...renderElement(project, element));
     lines.push('}', '');
   }
 
   lines.push(
-    'void cardputer_ui_init(lgfx::LGFX_Device* display) {',
+    'void cardputer_ui_init(CardputerDisplay* display) {',
     '  ui_display = display;',
     '}',
     '',
@@ -152,11 +153,15 @@ function renderElement(project, element) {
     if (font) {
       out.push(`  drawGeneratedText(display, &${font}, "${escapeCpp(p.text ?? '')}", ${n(x)}, ${n(y)}, ${textColor}, ${alignEnum(p.align)});`);
     } else {
-      const datum = p.align === 'center' ? 'lgfx::textdatum_t::middle_center' : p.align === 'right' ? 'lgfx::textdatum_t::middle_right' : 'lgfx::textdatum_t::middle_left';
-      out.push(`  display.setTextColor(${textColor});`);
-      out.push(`  display.setTextSize(${Math.max(1, Math.round((p.fontSize ?? 12) / 8))});`);
-      out.push(`  display.setTextDatum(${datum});`);
-      out.push(`  display.drawString("${escapeCpp(p.text ?? '')}", ${n(x)}, ${n(y)});`);
+      const scale = m5gfxTextSize(p.fontSize ?? 12);
+      const text = escapeCpp(p.text ?? '');
+      if (p.align === 'center') {
+        out.push(`  display.drawTextCentered("${text}", ${n(x)}, ${n(y)}, ${textColor}, ${scale});`);
+      } else if (p.align === 'right') {
+        out.push(`  display.drawText("${text}", ${n(x)} - display.textWidth("${text}", ${scale}), ${n(y - (7 * scale) / 2)}, ${textColor}, ${scale});`);
+      } else {
+        out.push(`  display.drawText("${text}", ${n(x)}, ${n(y - (7 * scale) / 2)}, ${textColor}, ${scale});`);
+      }
     }
   }
 
@@ -190,8 +195,7 @@ function renderElement(project, element) {
   }
 
   if (element.type === 'icon') {
-    out.push(`  display.setTextColor(${textColor});`);
-    out.push(`  display.drawString("${escapeCpp(symbolForIcon(p.icon ?? 'wifi'))}", ${n(element.x)}, ${n(element.y + element.h)});`);
+    out.push(`  display.drawText("${escapeCpp(symbolForIcon(p.icon ?? 'wifi'))}", ${n(element.x)}, ${n(element.y)}, ${textColor}, 1);`);
   }
 
   if (element.type === 'sparkline') {
@@ -231,7 +235,7 @@ function exportFontsHeader(fonts) {
   return [
     '#pragma once',
     '',
-    '#include <M5GFX.h>',
+    '#include "../cardputer_display.h"',
     '#include <stdint.h>',
     '',
     'enum CardputerTextAlign { CARDPUTER_ALIGN_LEFT, CARDPUTER_ALIGN_CENTER, CARDPUTER_ALIGN_RIGHT };',
@@ -241,7 +245,7 @@ function exportFontsHeader(fonts) {
     '',
     ...fonts.map((font) => `extern const CardputerGeneratedFont ${font.symbol};`),
     '',
-    'void drawGeneratedText(lgfx::LGFX_Device& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align);',
+    'void drawGeneratedText(CardputerDisplay& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align);',
     ''
   ].join('\n');
 }
@@ -275,7 +279,7 @@ function exportFontsSource(fonts) {
     '  return width;',
     '}',
     '',
-    'void drawGeneratedText(lgfx::LGFX_Device& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align) {',
+    'void drawGeneratedText(CardputerDisplay& display, const CardputerGeneratedFont* font, const char* text, int x, int y, uint16_t color, CardputerTextAlign align) {',
     '  if (!font || !text) return;',
     '  int cursor = x;',
     '  const int total = measure_text(font, text);',
@@ -404,7 +408,7 @@ function exportCMakeSnippet() {
     'idf_component_register(',
     '  SRCS "cardputer_ui.cpp" "cardputer_ui_assets.cpp" "cardputer_ui_fonts.cpp"',
     '  INCLUDE_DIRS "."',
-    '  REQUIRES M5GFX',
+    '  REQUIRES driver esp_driver_spi esp_driver_gpio esp_driver_ledc esp_driver_i2c',
     ')',
     ''
   ].join('\n');
@@ -412,23 +416,20 @@ function exportCMakeSnippet() {
 
 function exportPlatformIoSnippet(project) {
   return [
-    '#include <M5Cardputer.h>',
+    '#include "cardputer_display.h"',
     '#include "cardputer_ui.h"',
     '',
     `static CardputerScreenId currentScreen = ${screenEnum(project.screens.find((screen) => screen.id === project.flow.startScreenId) ?? project.screens[0])};`,
     '',
     'void setup() {',
-    '  M5Cardputer.begin();',
-    '  cardputer_ui_init(&M5Cardputer.Display);',
+    '  static CardputerDisplay display;',
+    '  display.begin();',
+    '  cardputer_ui_init(&display);',
     '  cardputer_ui_draw(currentScreen);',
     '}',
     '',
     'void loop() {',
-    '  M5Cardputer.update();',
-    '  if (M5Cardputer.Keyboard.isChange()) {',
-    '    currentScreen = cardputer_ui_handle_event(currentScreen, CARDPUTER_UI_EVENT_PRESS);',
-    '    cardputer_ui_draw(currentScreen);',
-    '  }',
+    '  cardputer_ui_draw(currentScreen);',
     '}',
     ''
   ].join('\n');
@@ -451,11 +452,11 @@ function screenEnum(screen) {
 
 function color(hex) {
   const clean = String(hex).replace('#', '');
-  if (clean.length !== 6) return 'TFT_WHITE';
+  if (clean.length !== 6) return 'CardputerDisplay::rgb565(255, 255, 255)';
   const r = parseInt(clean.slice(0, 2), 16);
   const g = parseInt(clean.slice(2, 4), 16);
   const b = parseInt(clean.slice(4, 6), 16);
-  return `display.color565(${r}, ${g}, ${b})`;
+  return `CardputerDisplay::rgb565(${r}, ${g}, ${b})`;
 }
 
 function alignEnum(align = 'left') {
