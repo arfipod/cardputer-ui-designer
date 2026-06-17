@@ -20,10 +20,10 @@ static constexpr gpio_num_t PIN_MOSI = GPIO_NUM_35;
 static constexpr gpio_num_t PIN_SCLK = GPIO_NUM_36;
 static constexpr gpio_num_t PIN_CS = GPIO_NUM_37;
 
-static constexpr int PANEL_OFFSET_X = 52;
-static constexpr int PANEL_OFFSET_Y = 40;
-static constexpr int PANEL_NATIVE_W = 135;
-static constexpr int PANEL_NATIVE_H = 240;
+static constexpr int PANEL_OFFSET_X = 0;
+static constexpr int PANEL_OFFSET_Y = 0;
+static constexpr int PANEL_NATIVE_W = 240;
+static constexpr int PANEL_NATIVE_H = 135;
 
 static spi_device_handle_t spi = nullptr;
 
@@ -98,7 +98,7 @@ void CardputerDisplay::initPanel() {
   writeCommand(0x3A);
   writeDataByte(0x55);
   writeCommand(0x36);
-  writeDataByte(0x00);
+  writeDataByte(0x60);
   writeCommand(0x21);
   writeCommand(0x13);
   writeCommand(0x29);
@@ -168,13 +168,11 @@ void CardputerDisplay::setAddressWindowNative(int x, int y, int w, int h) {
 void CardputerDisplay::flush() {
   uint16_t line[PANEL_NATIVE_W];
   setAddressWindowNative(PANEL_OFFSET_X, PANEL_OFFSET_Y, PANEL_NATIVE_W, PANEL_NATIVE_H);
-  for (int ny = 0; ny < PANEL_NATIVE_H; ++ny) {
-    for (int nx = 0; nx < PANEL_NATIVE_W; ++nx) {
-      const int lx = WIDTH - 1 - ny;
-      const int ly = nx;
-      line[nx] = swap16(framebuffer_[ly * WIDTH + lx]);
+  for (int y = 0; y < HEIGHT; ++y) {
+    for (int x = 0; x < WIDTH; ++x) {
+      line[x] = swap16(framebuffer_[y * WIDTH + x]);
     }
-    writeData(reinterpret_cast<const uint8_t*>(line), sizeof(line));
+    writeData(reinterpret_cast<const uint8_t*>(line), WIDTH * sizeof(uint16_t));
   }
 }
 
@@ -190,22 +188,20 @@ void CardputerDisplay::flushRect(CardputerRect rect) {
   rect = clipRect(rect);
   if (rect.empty()) return;
 
-  const int nativeX = PANEL_OFFSET_X + rect.y;
-  const int nativeY = PANEL_OFFSET_Y + (WIDTH - (rect.x + rect.w));
-  const int nativeW = rect.h;
-  const int nativeH = rect.w;
+  const int nativeX = PANEL_OFFSET_X + rect.x;
+  const int nativeY = PANEL_OFFSET_Y + rect.y;
+  const int nativeW = rect.w;
+  const int nativeH = rect.h;
 
   uint16_t line[PANEL_NATIVE_W];
   setAddressWindowNative(nativeX, nativeY, nativeW, nativeH);
-  for (int row = 0; row < nativeH; ++row) {
-    const int ny = nativeY - PANEL_OFFSET_Y + row;
-    for (int col = 0; col < nativeW; ++col) {
-      const int nx = nativeX - PANEL_OFFSET_X + col;
-      const int lx = WIDTH - 1 - ny;
-      const int ly = nx;
-      line[col] = swap16(framebuffer_[ly * WIDTH + lx]);
+  for (int row = 0; row < rect.h; ++row) {
+    const int y = rect.y + row;
+    for (int col = 0; col < rect.w; ++col) {
+      const int x = rect.x + col;
+      line[col] = swap16(framebuffer_[y * WIDTH + x]);
     }
-    writeData(reinterpret_cast<const uint8_t*>(line), nativeW * sizeof(uint16_t));
+    writeData(reinterpret_cast<const uint8_t*>(line), rect.w * sizeof(uint16_t));
   }
 }
 

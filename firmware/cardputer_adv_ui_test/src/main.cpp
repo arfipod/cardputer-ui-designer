@@ -81,6 +81,7 @@ enum class SelectedControl {
 
 static SelectedControl selected_control = SelectedControl::Menu;
 static bool run_animation = false;
+static bool keyboard_available = false;
 
 static void set_selection(SelectedControl selected) {
   selected_control = selected;
@@ -105,6 +106,29 @@ static void setup_screen() {
   set_selection(SelectedControl::Menu);
   set_run_animation(false);
   screen.begin();
+}
+
+static void show_display_self_test() {
+  const uint16_t colors[] = {
+      CardputerDisplay::rgb565(0xff, 0x00, 0x00),
+      CardputerDisplay::rgb565(0x00, 0xff, 0x00),
+      CardputerDisplay::rgb565(0x00, 0x00, 0xff),
+      CardputerDisplay::rgb565(0xff, 0xff, 0xff),
+  };
+
+  for (uint16_t color : colors) {
+    display.clear(color);
+    display.flush();
+    vTaskDelay(pdMS_TO_TICKS(250));
+  }
+
+  display.clear(CardputerDisplay::rgb565(0x00, 0x00, 0x00));
+  display.drawText("DISPLAY TEST", 24, 32, CardputerDisplay::rgb565(0xff, 0xff, 0xff), 2);
+  display.drawRect(0, 0, CardputerDisplay::WIDTH, CardputerDisplay::HEIGHT, CardputerDisplay::rgb565(0xff, 0xff, 0x00));
+  display.drawLine(0, 0, CardputerDisplay::WIDTH - 1, CardputerDisplay::HEIGHT - 1, CardputerDisplay::rgb565(0x00, 0xff, 0xff));
+  display.drawLine(CardputerDisplay::WIDTH - 1, 0, 0, CardputerDisplay::HEIGHT - 1, CardputerDisplay::rgb565(0xff, 0x00, 0xff));
+  display.flush();
+  vTaskDelay(pdMS_TO_TICKS(700));
 }
 
 static void update_animation() {
@@ -151,8 +175,11 @@ extern "C" void app_main(void) {
     ESP_LOGE(TAG, "Display init failed");
     return;
   }
+  ESP_LOGI(TAG, "Display init OK, running self-test pattern");
+  show_display_self_test();
 
-  if (!keyboard.begin()) {
+  keyboard_available = keyboard.begin();
+  if (!keyboard_available) {
     ESP_LOGW(TAG, "Keyboard init failed; animation demo will run without input");
   }
 
@@ -164,22 +191,21 @@ extern "C" void app_main(void) {
     const uint32_t nowMs = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     screen.update(nowMs);
 
-    CardputerKey key = keyboard.readKey();
-    if (key != CardputerKey::None) {
-      handle_key(key);
+    if (keyboard_available) {
+      CardputerKey key = keyboard.readKey();
+      if (key != CardputerKey::None) {
+        handle_key(key);
+      }
     }
 
     update_animation();
     screen.flushDirty(display);
 
     if ((ticks++ % 125) == 0) {
-      if (!keyboard.isReady()) {
-        keyboard.begin();
-      }
       ESP_LOGI(TAG, "UI alive display=%dx%d keyboard=%s",
                CardputerDisplay::WIDTH,
                CardputerDisplay::HEIGHT,
-               keyboard.isReady() ? "ready" : "offline");
+               keyboard_available ? "ready" : "offline");
     }
     vTaskDelay(pdMS_TO_TICKS(40));
   }
