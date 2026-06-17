@@ -2,6 +2,15 @@
 
 #include <stdint.h>
 
+struct CardputerRect {
+  int x = 0;
+  int y = 0;
+  int w = 0;
+  int h = 0;
+
+  bool empty() const { return w <= 0 || h <= 0; }
+};
+
 class CardputerDisplay {
  public:
   static constexpr int WIDTH = 240;
@@ -11,6 +20,8 @@ class CardputerDisplay {
   void setBrightness(uint8_t brightness);
   void clear(uint16_t color);
   void flush();
+  void flushRect(CardputerRect rect);
+  CardputerRect clipRect(CardputerRect rect) const;
 
   void drawPixel(int x, int y, uint16_t color);
   void drawLine(int x0, int y0, int x1, int y1, uint16_t color);

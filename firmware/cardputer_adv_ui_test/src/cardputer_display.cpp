@@ -204,6 +204,37 @@ void CardputerDisplay::flush() {
   }
 }
 
+CardputerRect CardputerDisplay::clipRect(CardputerRect rect) const {
+  const int x0 = std::max(0, rect.x);
+  const int y0 = std::max(0, rect.y);
+  const int x1 = std::min(WIDTH, rect.x + rect.w);
+  const int y1 = std::min(HEIGHT, rect.y + rect.h);
+  return {x0, y0, x1 - x0, y1 - y0};
+}
+
+void CardputerDisplay::flushRect(CardputerRect rect) {
+  rect = clipRect(rect);
+  if (rect.empty()) return;
+
+  const int nativeX = PANEL_OFFSET_X + rect.y;
+  const int nativeY = PANEL_OFFSET_Y + (WIDTH - (rect.x + rect.w));
+  const int nativeW = rect.h;
+  const int nativeH = rect.w;
+
+  uint16_t line[PANEL_NATIVE_W];
+  setAddressWindowNative(nativeX, nativeY, nativeW, nativeH);
+  for (int row = 0; row < nativeH; ++row) {
+    const int ny = nativeY - PANEL_OFFSET_Y + row;
+    for (int col = 0; col < nativeW; ++col) {
+      const int nx = nativeX - PANEL_OFFSET_X + col;
+      const int lx = WIDTH - 1 - ny;
+      const int ly = nx;
+      line[col] = swap16(framebuffer_[ly * WIDTH + lx]);
+    }
+    writeData(reinterpret_cast<const uint8_t*>(line), nativeW * sizeof(uint16_t));
+  }
+}
+
 void CardputerDisplay::clear(uint16_t color) {
   std::fill(framebuffer_, framebuffer_ + WIDTH * HEIGHT, color);
 }
