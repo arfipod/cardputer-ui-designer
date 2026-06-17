@@ -1,16 +1,32 @@
 import {
   DEVICE_PRESETS,
+  EVENT_TRIGGERS,
   addElement,
-  createDocument,
+  addFont,
+  addScreen,
+  addTransition,
+  cleanupFlow,
+  createProject,
   duplicateElement,
+  duplicateScreen,
+  getElement,
+  getScreen,
   moveLayer,
   removeElement,
+  removeFont,
+  removeScreen,
+  removeTransition,
   setDevice,
-  updateElement
-} from './core/document.js';
+  updateElement,
+  updateFont,
+  updateGrid,
+  updateScreen
+} from './core/project.js';
+import { buildFontVariants, createFontAsset, parseFontSizes } from './core/assets.js';
 import { clamp, snap, svgPoint, valueRatio } from './core/geometry.js';
-import { loadDocument, parseDesignDocument, saveDocument } from './core/storage.js';
-import { exportCpp, exportJson, exportLvgl } from './exporters/project.js';
+import { loadProject, parseDesignProject, saveProject } from './core/storage.js';
+import { exportFirmware, exportJson, exportXml } from './exporters/project.js';
+import { importXmlProject } from './exporters/xml.js';
 
 const ELEMENTS = [
   ['text', 'Text'],
@@ -26,132 +42,173 @@ const ELEMENTS = [
   ['image', 'Image']
 ];
 
-let doc = loadDocument();
-let selectedId = doc.elements.at(-1)?.id ?? null;
+let project = createProject();
+let selectedScreenId = project.flow.startScreenId;
+let selectedId = null;
+let selectedTransitionId = null;
+let selectedAssetId = null;
 let dragState = null;
 let zoom = 3;
-let history = [JSON.stringify(doc)];
+let history = [];
 let future = [];
 let lastBundle = null;
 let lastStageViewportSize = '';
 let shouldCenterStage = true;
+const loadedFonts = new Set();
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('Missing #app');
 
-app.innerHTML = `
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <img src="./public/cardputer-icon.svg" alt="" />
-        <div>
-          <strong>Cardputer UI Designer</strong>
-          <span>Node app without runtime dependencies</span>
+boot();
+
+async function boot() {
+  project = await loadProject();
+  selectedScreenId = project.flow.startScreenId;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  history = [JSON.stringify(project)];
+  await registerProjectFonts(project);
+  mount();
+  bindEvents();
+  render();
+}
+
+function mount() {
+  app.innerHTML = `
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <img src="./public/cardputer-icon.svg" alt="" />
+          <div>
+            <strong>Cardputer UI Designer</strong>
+          </div>
         </div>
-      </div>
-      <div class="actions">
-        <button data-action="undo">Undo</button>
-        <button data-action="redo">Redo</button>
-        <button data-action="export-json">Export JSON</button>
-        <button data-action="export-png">Export PNG</button>
-        <button data-action="export-cpp">M5GFX C++</button>
-        <button data-action="export-lvgl">LVGL C</button>
-        <label class="file-button">Import JSON <input id="import-file" type="file" accept="application/json,.json" /></label>
-      </div>
-    </header>
-
-    <aside class="left-panel">
-      <section>
-        <h2>Elements</h2>
-        <div class="tool-grid">${ELEMENTS.map(([type, label]) => `<button data-tool="${type}">${label}</button>`).join('')}</div>
-      </section>
-      <section>
-        <h2>Device</h2>
-        <label class="field">Preset
-          <select id="device-preset">${DEVICE_PRESETS.map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join('')}</select>
-        </label>
-        <p class="muted" id="device-notes"></p>
-      </section>
-      <section>
-        <h2>Layers</h2>
-        <div class="layer-actions">
-          <button data-action="layer-up">Up</button>
-          <button data-action="layer-down">Down</button>
-          <button data-action="layer-front">Front</button>
-          <button data-action="layer-back">Back</button>
+        <div class="actions">
+          <button data-action="undo">Undo</button>
+          <button data-action="redo">Redo</button>
+          <button data-action="export-json">Export JSON</button>
+          <button data-action="export-xml">LVGL XML</button>
+          <button data-action="export-firmware">M5GFX Bundle</button>
+          <button data-action="export-png">Export PNG</button>
+          <label class="file-button">Import <input id="import-file" type="file" accept="application/json,.json,.xml,.txt" /></label>
         </div>
-        <div id="layers" class="layers"></div>
-      </section>
-    </aside>
+      </header>
 
-    <main class="workspace">
-      <div class="canvas-toolbar">
-        <label>Zoom <input id="zoom" type="range" min="1" max="6" step="0.25" /></label>
-        <label>Grid <input id="grid-enabled" type="checkbox" /></label>
-        <label>Snap <input id="snap-enabled" type="checkbox" /></label>
-        <label>Grid size <input id="grid-size" type="number" min="1" max="24" /></label>
-        <button data-action="center-stage">Center stage</button>
-        <button data-action="center">Center selected</button>
-        <button data-action="duplicate">Duplicate</button>
-        <button data-action="delete">Delete</button>
-        <button data-action="reset">New</button>
-      </div>
-      <div class="stage-wrap" id="stage-wrap">
-        <svg id="stage" role="img" aria-label="Cardputer screen editor"></svg>
-      </div>
-      <div id="context-menu" class="context-menu" hidden></div>
-    </main>
+      <aside class="left-panel">
+        <section>
+          <h2>Screens</h2>
+          <div class="mini-actions">
+            <button data-action="screen-add">Add</button>
+            <button data-action="screen-duplicate">Duplicate</button>
+            <button data-action="screen-delete">Delete</button>
+            <button data-action="screen-start">Set start</button>
+          </div>
+          <div id="screens" class="stack-list"></div>
+        </section>
+        <section>
+          <h2>Elements</h2>
+          <div class="tool-grid">${ELEMENTS.map(([type, label]) => `<button data-tool="${type}">${label}</button>`).join('')}</div>
+        </section>
+        <section>
+          <h2>Device</h2>
+          <label class="field">Preset
+            <select id="device-preset">${DEVICE_PRESETS.map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join('')}</select>
+          </label>
+          <p class="muted" id="device-notes"></p>
+        </section>
+        <section>
+          <h2>Flow</h2>
+          <div class="mini-actions">
+            <button data-action="flow-add">Add from selected</button>
+            <button data-action="flow-delete">Delete transition</button>
+          </div>
+          <div id="flow" class="stack-list"></div>
+        </section>
+        <section>
+          <h2>Layers</h2>
+          <div class="layer-actions">
+            <button data-action="layer-up">Up</button>
+            <button data-action="layer-down">Down</button>
+            <button data-action="layer-front">Front</button>
+            <button data-action="layer-back">Back</button>
+          </div>
+          <div id="layers" class="layers"></div>
+        </section>
+      </aside>
 
-    <aside class="right-panel">
-      <section>
-        <h2>Inspector</h2>
-        <div id="inspector" class="inspector"></div>
-      </section>
-      <section>
-        <h2>Output</h2>
-        <textarea id="output" spellcheck="false" placeholder="Generated code or JSON appears here"></textarea>
-        <div class="output-actions">
-          <button data-action="copy-output">Copy</button>
-          <button data-action="download-output">Download</button>
+      <main class="workspace">
+        <div class="canvas-toolbar">
+          <label>Zoom <input id="zoom" type="range" min="1" max="6" step="0.25" /></label>
+          <label>Grid <input id="grid-enabled" type="checkbox" /></label>
+          <label>Snap <input id="snap-enabled" type="checkbox" /></label>
+          <label>Grid size <input id="grid-size" type="number" min="1" max="24" /></label>
+          <button data-action="center-stage">Center stage</button>
+          <button data-action="center">Center selected</button>
+          <button data-action="duplicate">Duplicate</button>
+          <button data-action="delete">Delete</button>
+          <button data-action="reset">New</button>
         </div>
-      </section>
-    </aside>
-  </div>
-`;
+        <div class="stage-wrap" id="stage-wrap">
+          <svg id="stage" role="img" aria-label="Cardputer screen editor"></svg>
+        </div>
+        <div id="context-menu" class="context-menu" hidden></div>
+      </main>
 
-const stage = query('#stage');
-const stageWrap = query('#stage-wrap');
-const contextMenu = query('#context-menu');
-const layers = query('#layers');
-const inspector = query('#inspector');
-const output = query('#output');
-
-bindEvents();
-render();
+      <aside class="right-panel">
+        <section>
+          <h2>Project</h2>
+          <label class="field">Name <input id="project-name" type="text" /></label>
+          <label class="field">Active screen <input id="screen-name" type="text" /></label>
+        </section>
+        <section>
+          <h2>Inspector</h2>
+          <div id="inspector" class="inspector"></div>
+        </section>
+        <section>
+          <h2>Fonts</h2>
+          <div class="font-upload">
+            <label class="field">Sizes <input id="font-sizes" type="text" value="12, 16, 20" /></label>
+            <label class="field">Range <input id="font-range" type="text" value="0x20-0x7F" /></label>
+            <label class="field">Extra symbols <input id="font-symbols" type="text" /></label>
+            <label class="file-button">Upload TTF <input id="font-file" type="file" accept=".ttf,font/ttf,font/otf,.otf" /></label>
+          </div>
+          <div id="fonts" class="stack-list"></div>
+        </section>
+        <section>
+          <h2>Output</h2>
+          <textarea id="output" spellcheck="false" placeholder="Generated code, XML or JSON appears here"></textarea>
+          <div class="output-actions">
+            <button data-action="copy-output">Copy</button>
+            <button data-action="download-output">Download</button>
+          </div>
+        </section>
+      </aside>
+    </div>
+  `;
+}
 
 function bindEvents() {
-  app.addEventListener('click', (event) => {
+  app.addEventListener('click', async (event) => {
     const target = event.target;
     const tool = target.closest?.('[data-tool]')?.dataset.tool;
     const action = target.closest?.('[data-action]')?.dataset.action;
 
     if (tool) {
-      commit(addElement(doc, tool));
-      selectedId = doc.elements.at(-1)?.id ?? null;
+      commit(addElement(project, selectedScreenId, tool));
+      selectedId = activeScreen().elements.at(-1)?.id ?? null;
       render();
     }
 
-    if (action) runAction(action);
+    if (action) await runAction(action);
   });
 
-  stage.addEventListener('pointerdown', onPointerDown);
-  stage.addEventListener('pointermove', onPointerMove);
-  stage.addEventListener('pointerup', finishDrag);
-  stage.addEventListener('pointercancel', finishDrag);
-  stage.addEventListener('contextmenu', onStageContextMenu);
-  document.addEventListener('click', hideContextMenu);
-  document.addEventListener('contextmenu', (event) => {
-    if (!stage.contains(event.target) && !contextMenu.contains(event.target)) hideContextMenu();
+  query('#project-name').addEventListener('change', (event) => {
+    commit({ ...project, meta: { ...project.meta, name: event.target.value, updatedAt: new Date().toISOString() } });
+    render();
+  });
+
+  query('#screen-name').addEventListener('change', (event) => {
+    commit(updateScreen(project, selectedScreenId, { name: event.target.value }));
+    render();
   });
 
   query('#zoom').addEventListener('input', (event) => {
@@ -160,36 +217,70 @@ function bindEvents() {
   });
 
   query('#grid-enabled').addEventListener('change', (event) => {
-    doc = { ...doc, grid: { ...doc.grid, enabled: event.target.checked } };
-    pushHistory();
+    commit(updateGrid(project, { enabled: event.target.checked }));
     render();
   });
 
   query('#snap-enabled').addEventListener('change', (event) => {
-    doc = { ...doc, grid: { ...doc.grid, snap: event.target.checked } };
-    pushHistory();
+    commit(updateGrid(project, { snap: event.target.checked }));
     render();
   });
 
   query('#grid-size').addEventListener('change', (event) => {
-    const size = clamp(Number(event.target.value), 1, 24);
-    doc = { ...doc, grid: { ...doc.grid, size } };
-    pushHistory();
+    commit(updateGrid(project, { size: clamp(Number(event.target.value), 1, 24) }));
     render();
   });
 
   query('#device-preset').addEventListener('change', (event) => {
-    commit(setDevice(doc, event.target.value));
+    commit(setDevice(project, event.target.value));
     render();
   });
 
   query('#import-file').addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const imported = parseDesignDocument(await file.text());
+    const raw = await file.text();
+    const imported = file.name.endsWith('.xml') || raw.includes('<!-- ===== project.xml ===== -->')
+      ? importXmlProject(raw)
+      : parseDesignProject(raw);
     commit(imported);
-    selectedId = imported.elements.at(-1)?.id ?? null;
+    selectedScreenId = imported.flow.startScreenId;
+    selectedId = activeScreen().elements.at(-1)?.id ?? null;
+    await registerProjectFonts(project);
     render();
+    event.target.value = '';
+  });
+
+  query('#font-file').addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const sizes = parseFontSizes(query('#font-sizes').value);
+    const font = createFontAsset({
+      name: file.name.replace(/\.[^.]+$/, ''),
+      filename: file.name,
+      mimeType: file.type || 'font/ttf',
+      dataUrl: await readFileAsDataUrl(file),
+      size: sizes[0] ?? 12,
+      range: query('#font-range').value,
+      symbols: query('#font-symbols').value
+    });
+    font.variants = buildFontVariants(font, sizes.length ? sizes : [12], query('#font-range').value, query('#font-symbols').value);
+    commit(addFont(project, font));
+    selectedAssetId = font.id;
+    await registerProjectFonts(project);
+    render();
+    event.target.value = '';
+  });
+
+  const stage = query('#stage');
+  stage.addEventListener('pointerdown', onPointerDown);
+  stage.addEventListener('pointermove', onPointerMove);
+  stage.addEventListener('pointerup', finishDrag);
+  stage.addEventListener('pointercancel', finishDrag);
+  stage.addEventListener('contextmenu', onStageContextMenu);
+  document.addEventListener('click', hideContextMenu);
+  document.addEventListener('contextmenu', (event) => {
+    if (!stage.contains(event.target) && !query('#context-menu').contains(event.target)) hideContextMenu();
   });
 
   document.addEventListener('keydown', (event) => {
@@ -213,57 +304,124 @@ function bindEvents() {
   });
 }
 
-function runAction(action) {
+async function runAction(action) {
   if (action === 'undo') undo();
   if (action === 'redo') redo();
   if (action === 'duplicate') duplicateSelected();
   if (action === 'delete') deleteSelected();
   if (action === 'center') centerSelected();
   if (action === 'center-stage') centerStageInViewport();
-  if (action === 'reset' && confirm('Create a new design?')) {
-    commit(createDocument());
-    selectedId = doc.elements.at(-1)?.id ?? null;
+  if (action === 'reset' && confirm('Create a new project?')) {
+    commit(createProject());
+    selectedScreenId = project.flow.startScreenId;
+    selectedId = activeScreen().elements.at(-1)?.id ?? null;
+    render();
+  }
+  if (action === 'screen-add') addNewScreen();
+  if (action === 'screen-duplicate') duplicateActiveScreen();
+  if (action === 'screen-delete') deleteActiveScreen();
+  if (action === 'screen-start') {
+    commit({ ...project, flow: { ...project.flow, startScreenId: selectedScreenId } });
+    render();
+  }
+  if (action === 'flow-add') addTransitionFromSelected();
+  if (action === 'flow-delete' && selectedTransitionId) {
+    commit(removeTransition(project, selectedTransitionId));
+    selectedTransitionId = null;
     render();
   }
   if (action === 'layer-up') moveSelectedLayer('up');
   if (action === 'layer-down') moveSelectedLayer('down');
   if (action === 'layer-front') moveSelectedLayer('front');
   if (action === 'layer-back') moveSelectedLayer('back');
-  if (action === 'export-json') showBundle(exportJson(doc));
-  if (action === 'export-cpp') showBundle(exportCpp(doc));
-  if (action === 'export-lvgl') showBundle(exportLvgl(doc));
+  if (action === 'export-json') showBundle(exportJson(project));
+  if (action === 'export-xml') showBundle(exportXml(project));
+  if (action === 'export-firmware') showBundle(await exportFirmware(project));
   if (action === 'export-png') exportPng();
-  if (action === 'copy-output') navigator.clipboard.writeText(output.value);
+  if (action === 'copy-output') navigator.clipboard.writeText(query('#output').value);
   if (action === 'download-output' && lastBundle) downloadText(lastBundle);
   if (action === 'context-duplicate') duplicateSelected();
   if (action === 'context-delete') deleteSelected();
   if (action === 'context-center') centerSelected();
+  if (action === 'asset-delete' && selectedAssetId) {
+    commit(removeFont(project, selectedAssetId));
+    selectedAssetId = project.assets.fonts[0]?.id ?? null;
+    render();
+  }
 }
 
 function render() {
-  saveDocument(doc);
+  void saveProject(project);
+  query('#project-name').value = project.meta.name;
+  query('#screen-name').value = activeScreen().name;
   query('#zoom').value = String(zoom);
-  query('#grid-enabled').checked = doc.grid.enabled;
-  query('#snap-enabled').checked = doc.grid.snap;
-  query('#grid-size').value = String(doc.grid.size);
-  query('#device-preset').value = doc.device.id;
-  query('#device-notes').textContent = `${doc.device.width} x ${doc.device.height}px. ${doc.device.colorDepth}. ${doc.device.notes}`;
+  query('#grid-enabled').checked = project.grid.enabled;
+  query('#snap-enabled').checked = project.grid.snap;
+  query('#grid-size').value = String(project.grid.size);
+  query('#device-preset').value = project.device.id;
+  query('#device-notes').textContent = `${project.device.width} x ${project.device.height}px. ${project.device.colorDepth}. ${project.device.notes}`;
+  renderScreens();
+  renderFlow();
   renderStage();
   renderLayers();
   renderInspector();
+  renderFonts();
+}
+
+function renderScreens() {
+  const screens = query('#screens');
+  clear(screens);
+  project.screens.forEach((screen) => {
+    const row = document.createElement('button');
+    row.className = `stack-row ${screen.id === selectedScreenId ? 'active' : ''}`;
+    row.innerHTML = `<strong>${escapeHtml(screen.name)}</strong><em>${screen.slug}${project.flow.startScreenId === screen.id ? ' / start' : ''}</em>`;
+    row.addEventListener('click', () => {
+      selectedScreenId = screen.id;
+      selectedId = screen.elements.at(-1)?.id ?? null;
+      selectedTransitionId = null;
+      shouldCenterStage = true;
+      render();
+    });
+    screens.append(row);
+  });
+}
+
+function renderFlow() {
+  const flow = query('#flow');
+  clear(flow);
+  if (!project.flow.transitions.length) {
+    flow.innerHTML = '<p class="muted">No transitions yet. Select an element and add one.</p>';
+    return;
+  }
+  project.flow.transitions.forEach((transition) => {
+    const from = getScreen(project, transition.fromScreenId);
+    const to = getScreen(project, transition.toScreenId);
+    const element = getElement(project, transition.fromScreenId, transition.elementId);
+    const row = document.createElement('button');
+    row.className = `stack-row ${transition.id === selectedTransitionId ? 'active' : ''}`;
+    row.innerHTML = `<strong>${escapeHtml(from?.name ?? '?')} -> ${escapeHtml(to?.name ?? '?')}</strong><em>${escapeHtml(element?.name ?? transition.elementId)} / ${transition.trigger}</em>`;
+    row.addEventListener('click', () => {
+      selectedTransitionId = transition.id;
+      selectedScreenId = transition.fromScreenId;
+      selectedId = transition.elementId;
+      render();
+    });
+    flow.append(row);
+  });
 }
 
 function renderStage() {
-  const stageViewportSize = `${doc.device.width}x${doc.device.height}@${zoom}`;
+  const stage = query('#stage');
+  const stageViewportSize = `${project.device.width}x${project.device.height}@${zoom}`;
   const viewportChanged = stageViewportSize !== lastStageViewportSize;
   lastStageViewportSize = stageViewportSize;
-  stage.setAttribute('viewBox', `0 0 ${doc.device.width} ${doc.device.height}`);
-  stage.style.width = `${doc.device.width * zoom}px`;
-  stage.style.height = `${doc.device.height * zoom}px`;
+  stage.setAttribute('viewBox', `0 0 ${project.device.width} ${project.device.height}`);
+  stage.style.width = `${project.device.width * zoom}px`;
+  stage.style.height = `${project.device.height * zoom}px`;
   clear(stage);
-  stage.append(svg('rect', { x: 0, y: 0, width: doc.device.width, height: doc.device.height, fill: '#05070b' }));
-  if (doc.grid.enabled) drawGrid();
-  for (const element of doc.elements) {
+  stage.append(svg('rect', { x: 0, y: 0, width: project.device.width, height: project.device.height, fill: '#05070b' }));
+  if (project.grid.enabled) drawGrid(stage);
+  for (const element of activeScreen().elements) {
     if (element.visible) stage.append(renderElementSvg(element));
   }
   const selected = getSelected();
@@ -274,10 +432,10 @@ function renderStage() {
   }
 }
 
-function drawGrid() {
+function drawGrid(stage) {
   const group = svg('g', { class: 'grid' });
-  for (let x = doc.grid.size; x < doc.device.width; x += doc.grid.size) group.append(svg('line', { x1: x, y1: 0, x2: x, y2: doc.device.height }));
-  for (let y = doc.grid.size; y < doc.device.height; y += doc.grid.size) group.append(svg('line', { x1: 0, y1: y, x2: doc.device.width, y2: y }));
+  for (let x = project.grid.size; x < project.device.width; x += project.grid.size) group.append(svg('line', { x1: x, y1: 0, x2: x, y2: project.device.height }));
+  for (let y = project.grid.size; y < project.device.height; y += project.grid.size) group.append(svg('line', { x1: 0, y1: y, x2: project.device.width, y2: y }));
   stage.append(group);
 }
 
@@ -295,6 +453,7 @@ function renderElementSvg(element) {
       y: element.y + element.h / 2,
       fill: p.color ?? '#ffffff',
       'font-size': p.fontSize ?? 12,
+      'font-family': fontFamily(p.fontId),
       'text-anchor': anchor(p.align),
       'dominant-baseline': 'middle'
     });
@@ -330,9 +489,7 @@ function renderElementSvg(element) {
   if (element.type === 'sparkline') {
     const points = p.points ?? [];
     const coords = [];
-    for (let index = 0; index < points.length - 1; index += 2) {
-      coords.push(`${element.x + (points[index] / 100) * element.w},${element.y + element.h - (points[index + 1] / 100) * element.h}`);
-    }
+    for (let index = 0; index < points.length - 1; index += 2) coords.push(`${element.x + (points[index] / 100) * element.w},${element.y + element.h - (points[index + 1] / 100) * element.h}`);
     group.append(svg('polyline', { points: coords.join(' '), fill: 'none', stroke: p.stroke, 'stroke-width': p.thickness ?? 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
   }
   if (element.type === 'image') {
@@ -357,11 +514,12 @@ function renderSelection(element) {
 }
 
 function renderLayers() {
+  const layers = query('#layers');
   clear(layers);
-  [...doc.elements].reverse().forEach((element) => {
+  [...activeScreen().elements].reverse().forEach((element) => {
     const row = document.createElement('button');
     row.className = `layer ${element.id === selectedId ? 'active' : ''}`;
-    row.innerHTML = `<span>${element.visible ? '●' : '○'}</span><strong>${element.name}</strong><em>${element.type}</em>`;
+    row.innerHTML = `<span>${element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
     row.addEventListener('click', () => {
       selectedId = element.id;
       render();
@@ -371,6 +529,7 @@ function renderLayers() {
 }
 
 function renderInspector() {
+  const inspector = query('#inspector');
   const element = getSelected();
   clear(inspector);
   if (!element) {
@@ -388,6 +547,7 @@ function renderInspector() {
   );
   if ('text' in element.props) inspector.append(inputField('Text', 'text', element.props.text ?? '', (value) => changeProp('text', value)));
   if ('fontSize' in element.props) inspector.append(inputField('Font size', 'number', element.props.fontSize ?? 12, (value) => changeProp('fontSize', Number(value))));
+  if ('fontId' in element.props) inspector.append(selectField('Font', [['', 'System'], ...project.assets.fonts.map((font) => [font.id, font.name])], element.props.fontId ?? '', (value) => changeProp('fontId', value)));
   if ('value' in element.props) inspector.append(inputField('Value', 'number', element.props.value ?? 0, (value) => changeProp('value', Number(value))));
   if ('min' in element.props) inspector.append(inputField('Min', 'number', element.props.min ?? 0, (value) => changeProp('min', Number(value))));
   if ('max' in element.props) inspector.append(inputField('Max', 'number', element.props.max ?? 100, (value) => changeProp('max', Number(value))));
@@ -401,16 +561,112 @@ function renderInspector() {
   if ('imageLabel' in element.props) inspector.append(inputField('Image label', 'text', element.props.imageLabel ?? '', (value) => changeProp('imageLabel', value)));
   if ('points' in element.props) inspector.append(inputField('Points', 'text', (element.props.points ?? []).join(', '), (value) => changeProp('points', value.split(',').map((part) => Number(part.trim())).filter(Number.isFinite))));
 
+  const eventsTitle = document.createElement('h2');
+  eventsTitle.textContent = 'Events';
+  inspector.append(eventsTitle);
+  EVENT_TRIGGERS.forEach((trigger) => {
+    const existing = project.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
+    inspector.append(selectField(trigger, [['', 'None'], ...project.screens.filter((screen) => screen.id !== selectedScreenId).map((screen) => [screen.id, screen.name])], existing?.toScreenId ?? '', (value) => setElementEvent(element, trigger, value)));
+  });
+
   function change(patch) {
-    commit(updateElement(doc, element.id, patch));
+    commit(updateElement(project, selectedScreenId, element.id, patch));
     selectedId = element.id;
     render();
   }
   function changeProp(key, value) {
-    commit(updateElement(doc, element.id, { props: { [key]: value } }));
+    commit(updateElement(project, selectedScreenId, element.id, { props: { [key]: value } }));
     selectedId = element.id;
     render();
   }
+}
+
+function renderFonts() {
+  const fonts = query('#fonts');
+  clear(fonts);
+  if (!project.assets.fonts.length) {
+    fonts.innerHTML = '<p class="muted">Upload a TTF to preview and export bitmap font variants.</p>';
+    return;
+  }
+  project.assets.fonts.forEach((font) => {
+    const row = document.createElement('div');
+    row.className = `asset-row ${font.id === selectedAssetId ? 'active' : ''}`;
+    row.innerHTML = `
+      <button data-font-id="${font.id}"><strong>${escapeHtml(font.name)}</strong><em>${font.variants.map((variant) => `${variant.size}px`).join(', ')}</em></button>
+      <button data-action="asset-delete">Delete</button>
+    `;
+    row.querySelector('[data-font-id]').addEventListener('click', () => {
+      selectedAssetId = font.id;
+      render();
+    });
+    row.querySelector('[data-action="asset-delete"]').addEventListener('click', () => {
+      selectedAssetId = font.id;
+    });
+    const firstVariant = font.variants[0];
+    row.append(
+      inputField('Sizes', 'text', font.variants.map((variant) => variant.size).join(', '), (value) => {
+        const sizes = parseFontSizes(value);
+        if (!sizes.length) return;
+        commit(updateFont(project, font.id, { variants: buildFontVariants(font, sizes, firstVariant?.range ?? '0x20-0x7F', firstVariant?.symbols ?? '') }));
+        render();
+      }),
+      inputField('Range', 'text', firstVariant?.range ?? '0x20-0x7F', (value) => {
+        commit(updateFont(project, font.id, { variants: font.variants.map((variant) => ({ ...variant, range: value })) }));
+        render();
+      }),
+      inputField('Symbols', 'text', firstVariant?.symbols ?? '', (value) => {
+        commit(updateFont(project, font.id, { variants: font.variants.map((variant) => ({ ...variant, symbols: value })) }));
+        render();
+      })
+    );
+    fonts.append(row);
+  });
+}
+
+function setElementEvent(element, trigger, toScreenId) {
+  let next = project;
+  const existing = next.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
+  if (existing) next = removeTransition(next, existing.id);
+  const toScreen = getScreen(next, toScreenId);
+  next = updateElement(next, selectedScreenId, element.id, { events: { [trigger]: toScreen ? toScreen.slug : '' } });
+  if (toScreenId) next = addTransition(next, { fromScreenId: selectedScreenId, elementId: element.id, trigger, toScreenId });
+  commit(cleanupFlow(next));
+  selectedId = element.id;
+  render();
+}
+
+function addNewScreen() {
+  commit(addScreen(project));
+  selectedScreenId = project.screens.at(-1).id;
+  selectedId = null;
+  shouldCenterStage = true;
+  render();
+}
+
+function duplicateActiveScreen() {
+  commit(duplicateScreen(project, selectedScreenId));
+  selectedScreenId = project.screens.at(-1).id;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  shouldCenterStage = true;
+  render();
+}
+
+function deleteActiveScreen() {
+  if (project.screens.length <= 1) return;
+  commit(removeScreen(project, selectedScreenId));
+  selectedScreenId = project.screens[0].id;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  render();
+}
+
+function addTransitionFromSelected() {
+  const element = getSelected();
+  const target = project.screens.find((screen) => screen.id !== selectedScreenId);
+  if (!element || !target) return;
+  const existing = project.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === 'press');
+  if (existing) return;
+  commit(addTransition(updateElement(project, selectedScreenId, element.id, { events: { press: target.slug } }), { fromScreenId: selectedScreenId, elementId: element.id, trigger: 'press', toScreenId: target.id }));
+  render();
 }
 
 function colorField(label, value, onChange) {
@@ -470,9 +726,10 @@ function selectField(label, options, value, onChange) {
   wrapper.textContent = label;
   const select = document.createElement('select');
   options.forEach((option) => {
+    const [optionValue, optionLabel] = Array.isArray(option) ? option : [option, option];
     const item = document.createElement('option');
-    item.value = option;
-    item.textContent = option;
+    item.value = optionValue;
+    item.textContent = optionLabel;
     select.append(item);
   });
   select.value = value;
@@ -481,14 +738,13 @@ function selectField(label, options, value, onChange) {
   return wrapper;
 }
 
-
 function onStageContextMenu(event) {
   const elementNode = event.target.closest?.('[data-id]');
   const id = elementNode?.dataset.id;
   if (!id) return;
   event.preventDefault();
   event.stopPropagation();
-  const element = doc.elements.find((item) => item.id === id);
+  const element = activeScreen().elements.find((item) => item.id === id);
   if (!element) return;
   selectedId = id;
   render();
@@ -496,6 +752,7 @@ function onStageContextMenu(event) {
 }
 
 function showContextMenu(clientX, clientY, element) {
+  const contextMenu = query('#context-menu');
   contextMenu.innerHTML = `
     <strong>${escapeHtml(element.name)}</strong>
     <button data-action="context-duplicate">Duplicate</button>
@@ -510,10 +767,11 @@ function showContextMenu(clientX, clientY, element) {
 }
 
 function hideContextMenu() {
-  contextMenu.hidden = true;
+  query('#context-menu').hidden = true;
 }
 
 function centerStageInViewport() {
+  const stageWrap = query('#stage-wrap');
   const left = Math.max(0, (stageWrap.scrollWidth - stageWrap.clientWidth) / 2);
   const top = Math.max(0, (stageWrap.scrollHeight - stageWrap.clientHeight) / 2);
   stageWrap.scrollTo({ left, top, behavior: 'auto' });
@@ -522,12 +780,6 @@ function centerStageInViewport() {
 function normalizeColor(value) {
   const color = String(value ?? '').trim();
   return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#ffffff';
-}
-
-function escapeHtml(value) {
-  const span = document.createElement('span');
-  span.textContent = value;
-  return span.innerHTML;
 }
 
 function onPointerDown(event) {
@@ -541,39 +793,39 @@ function onPointerDown(event) {
     render();
     return;
   }
-  const element = doc.elements.find((item) => item.id === id);
+  const element = activeScreen().elements.find((item) => item.id === id);
   if (!element || element.locked) return;
   selectedId = id;
-  dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(stage, event.clientX, event.clientY), original: structuredClone(element) };
-  stage.setPointerCapture(event.pointerId);
+  dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element) };
+  query('#stage').setPointerCapture(event.pointerId);
   render();
 }
 
 function onPointerMove(event) {
   if (!dragState) return;
-  const point = svgPoint(stage, event.clientX, event.clientY);
+  const point = svgPoint(query('#stage'), event.clientX, event.clientY);
   const dx = point.x - dragState.start.x;
   const dy = point.y - dragState.start.y;
   const o = dragState.original;
   const patch = {};
   if (dragState.mode === 'move') {
-    patch.x = snap(o.x + dx, doc.grid.size, doc.grid.snap);
-    patch.y = snap(o.y + dy, doc.grid.size, doc.grid.snap);
+    patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
+    patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
   } else {
     const right = o.x + o.w;
     const bottom = o.y + o.h;
     if (dragState.mode.includes('w')) {
-      patch.x = snap(o.x + dx, doc.grid.size, doc.grid.snap);
+      patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
       patch.w = right - patch.x;
     }
     if (dragState.mode.includes('n')) {
-      patch.y = snap(o.y + dy, doc.grid.size, doc.grid.snap);
+      patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
       patch.h = bottom - patch.y;
     }
-    if (dragState.mode.includes('e')) patch.w = snap(o.w + dx, doc.grid.size, doc.grid.snap);
-    if (dragState.mode.includes('s')) patch.h = snap(o.h + dy, doc.grid.size, doc.grid.snap);
+    if (dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
+    if (dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
   }
-  doc = updateElement(doc, dragState.id, patch);
+  project = updateElement(project, selectedScreenId, dragState.id, patch);
   renderStage();
   renderInspector();
 }
@@ -586,34 +838,38 @@ function finishDrag() {
 }
 
 function getSelected() {
-  return doc.elements.find((element) => element.id === selectedId);
+  return activeScreen().elements.find((element) => element.id === selectedId);
+}
+
+function activeScreen() {
+  return getScreen(project, selectedScreenId);
 }
 
 function deleteSelected() {
   if (!selectedId) return;
-  commit(removeElement(doc, selectedId));
-  selectedId = doc.elements.at(-1)?.id ?? null;
+  commit(removeElement(project, selectedScreenId, selectedId));
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
 function duplicateSelected() {
   if (!selectedId) return;
-  commit(duplicateElement(doc, selectedId));
-  selectedId = doc.elements.at(-1)?.id ?? selectedId;
+  commit(duplicateElement(project, selectedScreenId, selectedId));
+  selectedId = activeScreen().elements.at(-1)?.id ?? selectedId;
   render();
 }
 
 function centerSelected() {
   const element = getSelected();
   if (!element) return;
-  commit(updateElement(doc, element.id, { x: Math.round((doc.device.width - element.w) / 2), y: Math.round((doc.device.height - element.h) / 2) }));
+  commit(updateElement(project, selectedScreenId, element.id, { x: Math.round((project.device.width - element.w) / 2), y: Math.round((project.device.height - element.h) / 2) }));
   render();
 }
 
 function nudge(key, amount) {
   const element = getSelected();
   if (!element || element.locked) return;
-  commit(updateElement(doc, element.id, {
+  commit(updateElement(project, selectedScreenId, element.id, {
     x: element.x + (key === 'ArrowLeft' ? -amount : key === 'ArrowRight' ? amount : 0),
     y: element.y + (key === 'ArrowUp' ? -amount : key === 'ArrowDown' ? amount : 0)
   }));
@@ -622,17 +878,18 @@ function nudge(key, amount) {
 
 function moveSelectedLayer(direction) {
   if (!selectedId) return;
-  commit(moveLayer(doc, selectedId, direction));
+  commit(moveLayer(project, selectedScreenId, selectedId, direction));
   render();
 }
 
 function commit(next) {
-  doc = next;
+  project = next;
+  if (!getScreen(project, selectedScreenId)) selectedScreenId = project.screens[0].id;
   pushHistory();
 }
 
 function pushHistory() {
-  const raw = JSON.stringify(doc);
+  const raw = JSON.stringify(project);
   if (history.at(-1) !== raw) history.push(raw);
   if (history.length > 80) history = history.slice(-80);
   future = [];
@@ -642,8 +899,9 @@ function undo() {
   if (history.length <= 1) return;
   const current = history.pop();
   if (current) future.push(current);
-  doc = JSON.parse(history.at(-1) ?? JSON.stringify(createDocument()));
-  selectedId = doc.elements.at(-1)?.id ?? null;
+  project = JSON.parse(history.at(-1) ?? JSON.stringify(createProject()));
+  selectedScreenId = project.screens.some((screen) => screen.id === selectedScreenId) ? selectedScreenId : project.flow.startScreenId;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
@@ -651,14 +909,15 @@ function redo() {
   const next = future.pop();
   if (!next) return;
   history.push(next);
-  doc = JSON.parse(next);
-  selectedId = doc.elements.at(-1)?.id ?? null;
+  project = JSON.parse(next);
+  selectedScreenId = project.screens.some((screen) => screen.id === selectedScreenId) ? selectedScreenId : project.flow.startScreenId;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
 function showBundle(bundle) {
   lastBundle = bundle;
-  output.value = bundle.content;
+  query('#output').value = bundle.content;
 }
 
 function downloadText(bundle) {
@@ -672,6 +931,7 @@ function downloadText(bundle) {
 }
 
 function exportPng() {
+  const stage = query('#stage');
   const clone = stage.cloneNode(true);
   clone.querySelectorAll('.selection').forEach((node) => node.remove());
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -680,8 +940,8 @@ function exportPng() {
   const image = new Image();
   image.onload = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = doc.device.width;
-    canvas.height = doc.device.height;
+    canvas.width = project.device.width;
+    canvas.height = project.device.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(image, 0, 0);
@@ -691,12 +951,41 @@ function exportPng() {
       const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = `${doc.meta.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+      link.download = `${project.meta.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${activeScreen().slug}.png`;
       link.click();
       URL.revokeObjectURL(downloadUrl);
     }, 'image/png');
   };
   image.src = url;
+}
+
+async function registerProjectFonts(nextProject) {
+  if (!('FontFace' in globalThis) || !document.fonts) return;
+  for (const font of nextProject.assets.fonts) {
+    if (!font.dataUrl || loadedFonts.has(font.id)) continue;
+    try {
+      const face = new FontFace(font.family, `url(${font.dataUrl})`);
+      await face.load();
+      document.fonts.add(face);
+      loadedFonts.add(font.id);
+    } catch {
+      // Bad fonts are ignored in preview but still preserved in the project file.
+    }
+  }
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function fontFamily(fontId) {
+  const font = project.assets.fonts.find((item) => item.id === fontId);
+  return font ? `"${font.family}", sans-serif` : undefined;
 }
 
 function svg(tag, attrs = {}) {
@@ -730,5 +1019,11 @@ function anchor(align = 'left') {
 }
 
 function iconGlyph(icon) {
-  return { wifi: '≋', sd: '▣', battery: '▰', audio: '♪', imu: '◎' }[icon] ?? '?';
+  return { wifi: 'WiFi', sd: 'SD', battery: 'BAT', audio: 'AUD', imu: 'IMU' }[icon] ?? '?';
+}
+
+function escapeHtml(value) {
+  const span = document.createElement('span');
+  span.textContent = value;
+  return span.innerHTML;
 }

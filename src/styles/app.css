@@ -88,6 +88,7 @@ button:hover,
 .actions,
 .canvas-toolbar,
 .layer-actions,
+.mini-actions,
 .output-actions {
   display: flex;
   flex-wrap: wrap;
@@ -234,6 +235,55 @@ input[type="color"] {
 .layers {
   display: grid;
   gap: 0.4rem;
+}
+
+.stack-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.stack-row,
+.asset-row > button:first-child {
+  display: grid;
+  gap: 0.15rem;
+  text-align: left;
+}
+
+.stack-row strong,
+.asset-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-row em,
+.asset-row em {
+  color: #8f9bad;
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.stack-row.active,
+.asset-row.active > button:first-child {
+  border-color: #68d5ff;
+  background: #223046;
+}
+
+.mini-actions {
+  margin-bottom: 0.55rem;
+}
+
+.font-upload,
+.asset-row {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.asset-row {
+  padding: 0.55rem;
+  border: 1px solid #263147;
+  border-radius: 8px;
+  background: #0d131d;
 }
 
 .layer {

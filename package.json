@@ -9,7 +9,13 @@
     "build": "node scripts/build.mjs",
     "preview": "node scripts/dev-server.mjs dist --port 4173",
     "test": "node --test",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "firmware:ports": "node scripts/cardputer-firmware.mjs ports",
+    "firmware:prepare": "node scripts/cardputer-firmware.mjs prepare",
+    "firmware:build": "node scripts/cardputer-firmware.mjs build",
+    "firmware:check": "node scripts/cardputer-firmware.mjs check",
+    "firmware:upload": "node scripts/cardputer-firmware.mjs upload",
+    "firmware:monitor": "node scripts/cardputer-firmware.mjs monitor"
   },
   "keywords": [
     "m5stack",

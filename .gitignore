@@ -4,3 +4,10 @@ dist/
 *.local
 coverage/
 cardputer-ui-designer.zip
+firmware/**/.pio/
+firmware/**/build/
+firmware/**/.cache/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.*
+!firmware/**/sdkconfig.defaults
+firmware/**/generated-project.cardputer-ui.json
