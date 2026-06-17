@@ -1,0 +1,27 @@
+{
+  "name": "cardputer-ui-designer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free Node web app for designing M5Stack Cardputer-Adv user interfaces.",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs . --port 5173",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/dev-server.mjs dist --port 4173",
+    "test": "node --test",
+    "check": "npm run test && npm run build"
+  },
+  "keywords": [
+    "m5stack",
+    "cardputer",
+    "esp32",
+    "ui-designer",
+    "node",
+    "vanilla-js"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
