@@ -47,7 +47,8 @@ button:hover,
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .topbar {
@@ -165,11 +166,13 @@ textarea {
 }
 
 input[type="range"],
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="color"] {
   width: auto;
 }
 
 input[type="color"] {
+  min-width: 52px;
   height: 36px;
   padding: 0.15rem;
 }
@@ -177,9 +180,11 @@ input[type="color"] {
 .stage-wrap {
   flex: 1;
   overflow: auto;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 2rem;
+  min-height: 0;
   background:
     linear-gradient(45deg, #0b0f17 25%, transparent 25%),
     linear-gradient(-45deg, #0b0f17 25%, transparent 25%),
@@ -196,6 +201,7 @@ input[type="color"] {
 
 #stage {
   display: block;
+  flex: 0 0 auto;
   border-radius: 10px;
   box-shadow:
     0 0 0 1px #2b3548,
@@ -246,6 +252,46 @@ input[type="color"] {
 .inspector {
   display: grid;
   gap: 0.65rem;
+}
+
+.color-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.45rem;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 170px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid #334158;
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu strong {
+  padding: 0.2rem 0.25rem 0.35rem;
+  color: #b9c5d8;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu button {
+  text-align: left;
+}
+
+.context-menu .danger {
+  color: #ffd1d1;
 }
 
 .checkbox-field {
@@ -302,7 +348,8 @@ input[type="color"] {
   }
 
   .stage-wrap {
-    place-items: start;
+    align-items: flex-start;
+    justify-content: flex-start;
     padding: 1rem;
   }
 }
