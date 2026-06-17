@@ -13,6 +13,7 @@ import {
 } from '../src/core/project.js';
 import { createDocument } from '../src/core/document.js';
 import { parseGlyphSet } from '../src/core/assets.js';
+import { cardputerBitmapGlyph, cardputerBitmapScale, cardputerBitmapTextWidth } from '../src/core/cardputerBitmapFont.js';
 import { m5gfxTextSize, m5gfxTextWidth } from '../src/core/m5gfxText.js';
 import { parseDesignProject, serializeProject } from '../src/core/storage.js';
 import { exportFirmwareProject } from '../src/exporters/firmware.js';
@@ -85,9 +86,12 @@ test('parses glyph ranges and symbols', () => {
 });
 
 test('matches firmware bitmap text sizing', () => {
-  assert.equal(m5gfxTextSize(13), 2);
-  assert.equal(m5gfxTextWidth('MENU', 13), 48);
-  assert.equal(m5gfxTextWidth('pocketsynth v_0.1', 13), 204);
+  assert.equal(cardputerBitmapScale(13), 2);
+  assert.equal(cardputerBitmapTextWidth('MENU', 13), 48);
+  assert.equal(cardputerBitmapTextWidth('pocketsynth v_0.1', 13), 204);
+  assert.deepEqual(cardputerBitmapGlyph('A'), [0x7e, 0x11, 0x11, 0x11, 0x7e]);
+  assert.equal(m5gfxTextSize(13), cardputerBitmapScale(13));
+  assert.equal(m5gfxTextWidth('MENU', 13), cardputerBitmapTextWidth('MENU', 13));
 });
 
 test('exports multi-screen vanilla firmware and LVGL-style XML', async () => {
