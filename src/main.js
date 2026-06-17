@@ -33,6 +33,8 @@ let zoom = 3;
 let history = [JSON.stringify(doc)];
 let future = [];
 let lastBundle = null;
+let lastStageViewportSize = '';
+let shouldCenterStage = true;
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('Missing #app');
@@ -88,14 +90,16 @@ app.innerHTML = `
         <label>Grid <input id="grid-enabled" type="checkbox" /></label>
         <label>Snap <input id="snap-enabled" type="checkbox" /></label>
         <label>Grid size <input id="grid-size" type="number" min="1" max="24" /></label>
-        <button data-action="center">Center</button>
+        <button data-action="center-stage">Center stage</button>
+        <button data-action="center">Center selected</button>
         <button data-action="duplicate">Duplicate</button>
         <button data-action="delete">Delete</button>
         <button data-action="reset">New</button>
       </div>
-      <div class="stage-wrap">
+      <div class="stage-wrap" id="stage-wrap">
         <svg id="stage" role="img" aria-label="Cardputer screen editor"></svg>
       </div>
+      <div id="context-menu" class="context-menu" hidden></div>
     </main>
 
     <aside class="right-panel">
@@ -116,6 +120,8 @@ app.innerHTML = `
 `;
 
 const stage = query('#stage');
+const stageWrap = query('#stage-wrap');
+const contextMenu = query('#context-menu');
 const layers = query('#layers');
 const inspector = query('#inspector');
 const output = query('#output');
@@ -142,6 +148,11 @@ function bindEvents() {
   stage.addEventListener('pointermove', onPointerMove);
   stage.addEventListener('pointerup', finishDrag);
   stage.addEventListener('pointercancel', finishDrag);
+  stage.addEventListener('contextmenu', onStageContextMenu);
+  document.addEventListener('click', hideContextMenu);
+  document.addEventListener('contextmenu', (event) => {
+    if (!stage.contains(event.target) && !contextMenu.contains(event.target)) hideContextMenu();
+  });
 
   query('#zoom').addEventListener('input', (event) => {
     zoom = Number(event.target.value);
@@ -208,6 +219,7 @@ function runAction(action) {
   if (action === 'duplicate') duplicateSelected();
   if (action === 'delete') deleteSelected();
   if (action === 'center') centerSelected();
+  if (action === 'center-stage') centerStageInViewport();
   if (action === 'reset' && confirm('Create a new design?')) {
     commit(createDocument());
     selectedId = doc.elements.at(-1)?.id ?? null;
@@ -223,6 +235,9 @@ function runAction(action) {
   if (action === 'export-png') exportPng();
   if (action === 'copy-output') navigator.clipboard.writeText(output.value);
   if (action === 'download-output' && lastBundle) downloadText(lastBundle);
+  if (action === 'context-duplicate') duplicateSelected();
+  if (action === 'context-delete') deleteSelected();
+  if (action === 'context-center') centerSelected();
 }
 
 function render() {
@@ -239,6 +254,9 @@ function render() {
 }
 
 function renderStage() {
+  const stageViewportSize = `${doc.device.width}x${doc.device.height}@${zoom}`;
+  const viewportChanged = stageViewportSize !== lastStageViewportSize;
+  lastStageViewportSize = stageViewportSize;
   stage.setAttribute('viewBox', `0 0 ${doc.device.width} ${doc.device.height}`);
   stage.style.width = `${doc.device.width * zoom}px`;
   stage.style.height = `${doc.device.height * zoom}px`;
@@ -250,6 +268,10 @@ function renderStage() {
   }
   const selected = getSelected();
   if (selected) stage.append(renderSelection(selected));
+  if (shouldCenterStage || viewportChanged) {
+    shouldCenterStage = false;
+    requestAnimationFrame(centerStageInViewport);
+  }
 }
 
 function drawGrid() {
@@ -371,9 +393,9 @@ function renderInspector() {
   if ('max' in element.props) inspector.append(inputField('Max', 'number', element.props.max ?? 100, (value) => changeProp('max', Number(value))));
   if ('radius' in element.props) inspector.append(inputField('Radius', 'number', element.props.radius ?? 0, (value) => changeProp('radius', Number(value))));
   if ('thickness' in element.props) inspector.append(inputField('Thickness', 'number', element.props.thickness ?? 1, (value) => changeProp('thickness', Number(value))));
-  if ('fill' in element.props) inspector.append(inputField('Fill', 'color', element.props.fill ?? '#000000', (value) => changeProp('fill', value)));
-  if ('stroke' in element.props) inspector.append(inputField('Stroke', 'color', element.props.stroke ?? '#ffffff', (value) => changeProp('stroke', value)));
-  if ('color' in element.props) inspector.append(inputField('Text color', 'color', element.props.color ?? '#ffffff', (value) => changeProp('color', value)));
+  if ('fill' in element.props) inspector.append(colorField('Component color', element.props.fill ?? '#000000', (value) => changeProp('fill', value)));
+  if ('stroke' in element.props) inspector.append(colorField('Border / line color', element.props.stroke ?? '#ffffff', (value) => changeProp('stroke', value)));
+  if ('color' in element.props) inspector.append(colorField(element.type === 'icon' ? 'Icon color' : 'Text color', element.props.color ?? '#ffffff', (value) => changeProp('color', value)));
   if ('icon' in element.props) inspector.append(selectField('Icon', ['wifi', 'sd', 'battery', 'audio', 'imu'], element.props.icon ?? 'wifi', (value) => changeProp('icon', value)));
   if ('align' in element.props) inspector.append(selectField('Align', ['left', 'center', 'right'], element.props.align ?? 'left', (value) => changeProp('align', value)));
   if ('imageLabel' in element.props) inspector.append(inputField('Image label', 'text', element.props.imageLabel ?? '', (value) => changeProp('imageLabel', value)));
@@ -389,6 +411,34 @@ function renderInspector() {
     selectedId = element.id;
     render();
   }
+}
+
+function colorField(label, value, onChange) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'field color-field';
+  wrapper.textContent = label;
+  const controls = document.createElement('span');
+  controls.className = 'color-controls';
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = normalizeColor(value);
+  const hex = document.createElement('input');
+  hex.type = 'text';
+  hex.value = String(value);
+  hex.pattern = '#[0-9a-fA-F]{6}';
+  input.addEventListener('input', () => {
+    hex.value = input.value;
+    onChange(input.value);
+  });
+  hex.addEventListener('change', () => {
+    const color = normalizeColor(hex.value);
+    input.value = color;
+    hex.value = color;
+    onChange(color);
+  });
+  controls.append(input, hex);
+  wrapper.append(controls);
+  return wrapper;
 }
 
 function inputField(label, type, value, onChange) {
@@ -431,7 +481,57 @@ function selectField(label, options, value, onChange) {
   return wrapper;
 }
 
+
+function onStageContextMenu(event) {
+  const elementNode = event.target.closest?.('[data-id]');
+  const id = elementNode?.dataset.id;
+  if (!id) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const element = doc.elements.find((item) => item.id === id);
+  if (!element) return;
+  selectedId = id;
+  render();
+  showContextMenu(event.clientX, event.clientY, element);
+}
+
+function showContextMenu(clientX, clientY, element) {
+  contextMenu.innerHTML = `
+    <strong>${escapeHtml(element.name)}</strong>
+    <button data-action="context-duplicate">Duplicate</button>
+    <button data-action="context-center">Center selected</button>
+    <button data-action="context-delete" class="danger">Delete</button>
+  `;
+  contextMenu.hidden = false;
+  const { innerWidth, innerHeight } = window;
+  const rect = contextMenu.getBoundingClientRect();
+  contextMenu.style.left = `${Math.min(clientX, innerWidth - rect.width - 8)}px`;
+  contextMenu.style.top = `${Math.min(clientY, innerHeight - rect.height - 8)}px`;
+}
+
+function hideContextMenu() {
+  contextMenu.hidden = true;
+}
+
+function centerStageInViewport() {
+  const left = Math.max(0, (stageWrap.scrollWidth - stageWrap.clientWidth) / 2);
+  const top = Math.max(0, (stageWrap.scrollHeight - stageWrap.clientHeight) / 2);
+  stageWrap.scrollTo({ left, top, behavior: 'auto' });
+}
+
+function normalizeColor(value) {
+  const color = String(value ?? '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#ffffff';
+}
+
+function escapeHtml(value) {
+  const span = document.createElement('span');
+  span.textContent = value;
+  return span.innerHTML;
+}
+
 function onPointerDown(event) {
+  hideContextMenu();
   const target = event.target;
   const handle = target.closest?.('[data-mode]');
   const elementNode = target.closest?.('[data-id]');
