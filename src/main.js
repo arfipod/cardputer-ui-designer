@@ -578,6 +578,7 @@ function renderStage() {
   if (!screen.elements.length) renderStageMessage(stage, 'Empty screen', 'Add an element to begin laying out this screen.');
   const selected = getSelectedElements();
   if (selected.length) stage.append(renderSelection(selected));
+  if (editorState.dragState?.mode === 'marquee') stage.append(renderMarqueeSelection(editorState.dragState));
   if (editorState.dragState?.guides?.length) stage.append(renderSnapGuides(editorState.dragState.guides, project.device));
   if (editorState.shouldCenterStage || viewportChanged) {
     editorState.shouldCenterStage = false;
@@ -713,16 +714,30 @@ function renderSelection(elements) {
   const group = svg('g', { class: `selection${elements.every((element) => element.locked) ? ' locked' : ''}` });
   const isMulti = elements.length > 1;
   group.append(svg('rect', { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h, fill: 'transparent', stroke: '#ffffff', 'stroke-dasharray': '3 2', 'pointer-events': isMulti ? 'visibleStroke' : 'none', ...(isMulti ? { 'data-selection': 'multi' } : {}) }));
-  if (isMulti) return group;
-  const element = elements[0];
-  if (element.locked) return group;
+  if (elements.every((element) => element.locked)) return group;
+  const handleTarget = isMulti ? bounds : elements[0];
   [
-    ['resize-nw', element.x, element.y],
-    ['resize-ne', element.x + element.w, element.y],
-    ['resize-sw', element.x, element.y + element.h],
-    ['resize-se', element.x + element.w, element.y + element.h]
-  ].forEach(([mode, x, y]) => group.append(svg('rect', { x: x - 2.5, y: y - 2.5, width: 5, height: 5, class: 'handle', 'data-id': element.id, 'data-mode': mode })));
+    ['resize-nw', handleTarget.x, handleTarget.y],
+    ['resize-ne', handleTarget.x + handleTarget.w, handleTarget.y],
+    ['resize-sw', handleTarget.x, handleTarget.y + handleTarget.h],
+    ['resize-se', handleTarget.x + handleTarget.w, handleTarget.y + handleTarget.h]
+  ].forEach(([mode, x, y]) => group.append(svg('rect', { x: x - 2.5, y: y - 2.5, width: 5, height: 5, class: 'handle', ...(isMulti ? { 'data-selection': 'multi' } : { 'data-id': handleTarget.id }), 'data-mode': mode })));
   return group;
+}
+
+function renderMarqueeSelection(dragState) {
+  const rect = rectFromPoints(dragState.start, dragState.current ?? dragState.start);
+  return svg('rect', {
+    x: rect.x,
+    y: rect.y,
+    width: rect.w,
+    height: rect.h,
+    class: 'marquee-selection',
+    fill: 'rgba(104, 213, 255, 0.12)',
+    stroke: '#68d5ff',
+    'stroke-dasharray': '3 2',
+    'pointer-events': 'none'
+  });
 }
 
 function sparklinePreviewPoints(element) {
@@ -1500,17 +1515,20 @@ function normalizeColor(value) {
 function onPointerDown(event) {
   hideContextMenu();
   const target = event.target;
+  const handle = target.closest?.('.handle[data-mode]');
+  if (handle) {
+    startSelectionDrag(event, handle.dataset.mode, handle.dataset.id ?? null);
+    return;
+  }
   const selectionNode = target.closest?.('[data-selection]');
   if (selectionNode) {
     startSelectionDrag(event);
     return;
   }
-  const handle = target.closest?.('.handle[data-mode]');
   const elementNode = target.closest?.('[data-id]');
-  const id = handle?.dataset.id ?? elementNode?.dataset.id;
+  const id = elementNode?.dataset.id;
   if (!id) {
-    editorStore.clearElementSelection();
-    render();
+    startMarqueeSelection(event);
     return;
   }
   const element = activeScreen().elements.find((item) => item.id === id);
@@ -1525,12 +1543,29 @@ function onPointerDown(event) {
     render();
     return;
   }
-  startSelectionDrag(event, handle?.dataset.mode ?? 'move', id);
+  startSelectionDrag(event, 'move', id);
+}
+
+function startMarqueeSelection(event) {
+  const point = svgPoint(query('#stage'), event.clientX, event.clientY);
+  const keepExistingSelection = event.shiftKey || event.ctrlKey || event.metaKey;
+  editorState.dragState = {
+    mode: 'marquee',
+    start: point,
+    current: point,
+    ids: [],
+    originalSelectionIds: keepExistingSelection ? getSelectedIds() : [],
+    guides: []
+  };
+  query('#stage').setPointerCapture(event.pointerId);
+  if (!keepExistingSelection) editorStore.clearElementSelection();
+  render();
 }
 
 function startSelectionDrag(event, mode = 'move', focusId = null) {
   const selected = getSelectedElements();
-  const dragElements = (selected.length > 1 && mode === 'move' ? selected : selected.filter((element) => element.id === focusId))
+  const multiSelectionDrag = selected.length > 1 && (mode === 'move' || mode.startsWith('resize-')) && !focusId;
+  const dragElements = (multiSelectionDrag ? selected : selected.filter((element) => element.id === focusId))
     .filter((element) => !element.locked);
   if (!dragElements.length) {
     render();
@@ -1558,6 +1593,15 @@ function onPointerMove(event) {
     return;
   }
   const point = svgPoint(query('#stage'), event.clientX, event.clientY);
+  if (editorState.dragState.mode === 'marquee') {
+    editorState.dragState.current = point;
+    updateMarqueeSelection();
+    renderStage();
+    renderLayers();
+    renderInspector();
+    renderStatusHelp();
+    return;
+  }
   const dx = point.x - editorState.dragState.start.x;
   const dy = point.y - editorState.dragState.start.y;
   const o = editorState.dragState.original;
@@ -1585,19 +1629,17 @@ function onPointerMove(event) {
     }));
   } else {
     editorState.dragState.guides = [];
-    const right = o.x + o.w;
-    const bottom = o.y + o.h;
-    if (editorState.dragState.mode.includes('w')) {
-      patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
-      patch.w = right - patch.x;
+    if (editorState.dragState.ids.length > 1) {
+      const nextBounds = resizeBoundsFromDrag(o, dx, dy, editorState.dragState.mode);
+      nextProject = updateElementsFromOriginals(editorState.dragState.originals, (element) => resizeElementWithinBounds(element, o, nextBounds));
+    } else {
+      const nextBounds = resizeBoundsFromDrag(o, dx, dy, editorState.dragState.mode);
+      patch.x = nextBounds.x;
+      patch.y = nextBounds.y;
+      patch.w = nextBounds.w;
+      patch.h = nextBounds.h;
+      nextProject = updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch);
     }
-    if (editorState.dragState.mode.includes('n')) {
-      patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
-      patch.h = bottom - patch.y;
-    }
-    if (editorState.dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
-    if (editorState.dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
-    nextProject = updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch);
   }
   project = projectStore.setProject(nextProject, { capture: CAPTURE_MODE.ephemeral });
   renderStage();
@@ -1606,6 +1648,12 @@ function onPointerMove(event) {
 
 function finishDrag() {
   if (!editorState.dragState) return;
+  if (editorState.dragState.mode === 'marquee') {
+    updateMarqueeSelection();
+    editorStore.setDragState(null);
+    render();
+    return;
+  }
   editorStore.setDragState(null);
   commit(project, { capture: CAPTURE_MODE.immediate });
   render();
@@ -1653,6 +1701,76 @@ function updateElementsFromOriginals(originals, patchForElement) {
     (nextProject, element) => updateElement(nextProject, editorState.selectedScreenId, element.id, patchForElement(element)),
     project
   );
+}
+
+function updateMarqueeSelection() {
+  const dragState = editorState.dragState;
+  if (!dragState || dragState.mode !== 'marquee') return;
+  const rect = rectFromPoints(dragState.start, dragState.current ?? dragState.start);
+  const baseIds = dragState.originalSelectionIds ?? [];
+  const baseIdSet = new Set(baseIds);
+  const selectedIds = activeScreen().elements
+    .filter((element) => element.visible !== false && rectContainsElement(rect, element))
+    .map((element) => element.id);
+  editorStore.selectElements([...baseIds, ...selectedIds.filter((id) => !baseIdSet.has(id))]);
+}
+
+function rectFromPoints(start, end) {
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  return {
+    x,
+    y,
+    w: Math.abs(end.x - start.x),
+    h: Math.abs(end.y - start.y)
+  };
+}
+
+function rectContainsElement(rect, element) {
+  return (
+    element.x >= rect.x &&
+    element.y >= rect.y &&
+    element.x + element.w <= rect.x + rect.w &&
+    element.y + element.h <= rect.y + rect.h
+  );
+}
+
+function resizeBoundsFromDrag(bounds, dx, dy, mode) {
+  const direction = resizeDirection(mode);
+  const minSize = 1;
+  const right = bounds.x + bounds.w;
+  const bottom = bounds.y + bounds.h;
+  let left = bounds.x;
+  let top = bounds.y;
+  let nextRight = right;
+  let nextBottom = bottom;
+
+  if (direction.includes('w')) left = Math.min(right - minSize, snap(bounds.x + dx, project.grid.size, project.grid.snap));
+  if (direction.includes('n')) top = Math.min(bottom - minSize, snap(bounds.y + dy, project.grid.size, project.grid.snap));
+  if (direction.includes('e')) nextRight = Math.max(left + minSize, snap(right + dx, project.grid.size, project.grid.snap));
+  if (direction.includes('s')) nextBottom = Math.max(top + minSize, snap(bottom + dy, project.grid.size, project.grid.snap));
+
+  return {
+    x: left,
+    y: top,
+    w: nextRight - left,
+    h: nextBottom - top
+  };
+}
+
+function resizeDirection(mode) {
+  return mode.startsWith('resize-') ? mode.slice('resize-'.length) : mode;
+}
+
+function resizeElementWithinBounds(element, sourceBounds, targetBounds) {
+  const scaleX = sourceBounds.w ? targetBounds.w / sourceBounds.w : 1;
+  const scaleY = sourceBounds.h ? targetBounds.h / sourceBounds.h : 1;
+  return {
+    x: snap(targetBounds.x + (element.x - sourceBounds.x) * scaleX, project.grid.size, project.grid.snap),
+    y: snap(targetBounds.y + (element.y - sourceBounds.y) * scaleY, project.grid.size, project.grid.snap),
+    w: Math.max(1, snap(element.w * scaleX, project.grid.size, project.grid.snap)),
+    h: Math.max(1, snap(element.h * scaleY, project.grid.size, project.grid.snap))
+  };
 }
 
 function reconcileEditorSelection({ resetElement = false } = {}) {
@@ -1953,6 +2071,10 @@ function query(selector) {
   const element = document.querySelector(selector);
   if (!element) throw new Error(`Missing selector: ${selector}`);
   return element;
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function textX(element) {

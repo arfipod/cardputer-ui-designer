@@ -326,6 +326,15 @@ input[type="color"] {
   cursor: nwse-resize;
 }
 
+.selection .handle[data-mode='resize-ne'],
+.selection .handle[data-mode='resize-sw'] {
+  cursor: nesw-resize;
+}
+
+.marquee-selection {
+  vector-effect: non-scaling-stroke;
+}
+
 .selection.locked rect {
   stroke: #f6c177;
 }
