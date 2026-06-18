@@ -34,7 +34,7 @@ import { smartSnapMove } from './canvas/snapping/snapEngine.js';
 import { renderSnapGuides } from './canvas/snapping/snapGuides.js';
 import { createActionRegistry } from './app/actions/actionRegistry.js';
 import { registerEditorActions } from './app/actions/editorActions.js';
-import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
+import { getShortcutEntries, runKeyboardShortcut, shortcutLabel } from './app/actions/keyboardShortcuts.js';
 import { createEditorStore } from './app/state/editorStore.js';
 import { CAPTURE_MODE } from './app/state/history.js';
 import { createProjectStore, firstElementId } from './app/state/projectStore.js';
@@ -65,11 +65,21 @@ let lastBundle = null;
 let lastPreviewAnimationMs = 0;
 const loadedFonts = new Set();
 const actions = createActionRegistry();
+const commandPaletteState = {
+  items: [],
+  selectedIndex: 0,
+  lastFocus: null
+};
+const dialogState = {
+  lastFocus: null
+};
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('Missing #app');
 
 registerEditorActions(actions, createEditorCommands());
+registerUiActions();
+renderBootEmptyState();
 boot();
 
 async function boot() {
@@ -93,6 +103,8 @@ function mount() {
           </div>
         </div>
         <div class="actions">
+          <button data-action="command-palette-open">Commands</button>
+          <button data-action="shortcuts-open">Shortcuts</button>
           <button data-action="undo">Undo</button>
           <button data-action="redo">Redo</button>
           <button data-action="export-json">Export JSON</button>
@@ -183,6 +195,7 @@ function mount() {
         <div class="stage-wrap" id="stage-wrap">
           <svg id="stage" role="img" aria-label="Cardputer screen editor"></svg>
         </div>
+        <div class="status-help" id="status-help" role="status" aria-live="polite"></div>
         <div id="context-menu" class="context-menu" hidden></div>
       </main>
 
@@ -227,6 +240,25 @@ function mount() {
           </div>
         </section>
       </aside>
+      <div id="command-palette" class="modal-layer" hidden>
+        <div class="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-palette-title">
+          <div class="command-palette-header">
+            <h2 id="command-palette-title">Command Palette</h2>
+            <button type="button" class="icon-button" data-command-palette-close aria-label="Close command palette">Close</button>
+          </div>
+          <input id="command-palette-input" type="search" placeholder="Search actions" autocomplete="off" aria-label="Search actions" />
+          <div id="command-palette-list" class="command-palette-list" role="listbox"></div>
+        </div>
+      </div>
+      <div id="shortcuts-dialog" class="modal-layer" hidden>
+        <div class="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+          <div class="command-palette-header">
+            <h2 id="shortcuts-title">Keyboard Shortcuts</h2>
+            <button type="button" class="icon-button" data-shortcuts-close aria-label="Close shortcuts">Close</button>
+          </div>
+          <div id="shortcuts-list" class="shortcuts-list"></div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -321,7 +353,52 @@ function bindEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && closeTopDialog()) {
+      event.preventDefault();
+      return;
+    }
     void runKeyboardShortcut(event, actions, createActionContext());
+  });
+
+  const palette = query('#command-palette');
+  const paletteInput = query('#command-palette-input');
+  const paletteList = query('#command-palette-list');
+  palette.addEventListener('click', (event) => {
+    if (event.target === palette || event.target.closest?.('[data-command-palette-close]')) closeCommandPalette();
+  });
+  paletteInput.addEventListener('input', renderCommandPaletteList);
+  paletteInput.addEventListener('keydown', async (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCommandPalette();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveCommandPaletteSelection(event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      await runSelectedCommandPaletteAction();
+    }
+  });
+  paletteList.addEventListener('click', async (event) => {
+    const button = event.target.closest?.('[data-command-id]');
+    if (!button || button.disabled) return;
+    commandPaletteState.selectedIndex = Number(button.dataset.commandIndex ?? 0);
+    await runSelectedCommandPaletteAction();
+  });
+  paletteList.addEventListener('mousemove', (event) => {
+    const button = event.target.closest?.('[data-command-id]');
+    if (!button) return;
+    commandPaletteState.selectedIndex = Number(button.dataset.commandIndex ?? 0);
+    refreshCommandPaletteSelection();
+  });
+
+  const shortcutsDialog = query('#shortcuts-dialog');
+  shortcutsDialog.addEventListener('click', (event) => {
+    if (event.target === shortcutsDialog || event.target.closest?.('[data-shortcuts-close]')) closeShortcutsDialog();
   });
 }
 
@@ -361,10 +438,41 @@ function createEditorCommands() {
     setSmartSnapEnabled,
     setStartScreen,
     setZoom,
+    toggleGrid: () => setGridEnabled(!project.grid.enabled),
+    toggleGridSnap: () => setGridSnap(!project.grid.snap),
+    toggleSmartSnap: () => setSmartSnapEnabled(!editorState.smartSnapEnabled),
     undo,
     unlockSelected: () => setSelectedLocked(false),
     distributeSelected
   };
+}
+
+function registerUiActions() {
+  actions.registerMany([
+    {
+      id: 'command-palette-open',
+      label: 'Open command palette',
+      shortcut: 'mod+k',
+      capture: CAPTURE_MODE.none,
+      run: openCommandPalette
+    },
+    {
+      id: 'shortcuts-open',
+      label: 'Show keyboard shortcuts',
+      shortcut: '?',
+      capture: CAPTURE_MODE.none,
+      run: openShortcutsDialog
+    }
+  ]);
+}
+
+function renderBootEmptyState() {
+  app.innerHTML = `
+    <div class="startup-empty" role="status" aria-live="polite">
+      <strong>No project loaded yet</strong>
+      <span>Loading the saved editor project...</span>
+    </div>
+  `;
 }
 
 function createActionContext(payload) {
@@ -385,8 +493,10 @@ function createActionContext(payload) {
 
 function render() {
   void saveProject(projectStore.getPersistentProject());
+  const screen = activeScreen();
   query('#project-name').value = project.meta.name;
-  query('#screen-name').value = activeScreen().name;
+  query('#screen-name').value = screen?.name ?? '';
+  query('#screen-name').disabled = !screen;
   query('#zoom').value = String(editorState.zoom);
   query('#grid-enabled').checked = project.grid.enabled;
   query('#snap-enabled').checked = project.grid.snap;
@@ -400,6 +510,8 @@ function render() {
   renderLayers();
   renderInspector();
   renderFonts();
+  renderStatusHelp();
+  refreshActionButtons();
 }
 
 function renderScreens() {
@@ -446,6 +558,7 @@ function renderFlow() {
 
 function renderStage() {
   const stage = query('#stage');
+  const screen = activeScreen();
   const stageViewportSize = `${project.device.width}x${project.device.height}@${editorState.zoom}`;
   const viewportChanged = stageViewportSize !== editorState.lastStageViewportSize;
   editorState.lastStageViewportSize = stageViewportSize;
@@ -454,10 +567,15 @@ function renderStage() {
   stage.style.height = `${project.device.height * editorState.zoom}px`;
   clear(stage);
   stage.append(svg('rect', { x: 0, y: 0, width: project.device.width, height: project.device.height, fill: '#05070b' }));
+  if (!screen) {
+    renderStageMessage(stage, 'No screen selected', 'Choose a screen from the left panel or add a new one.');
+    return;
+  }
   if (project.grid.enabled) drawGrid(stage);
-  for (const element of activeScreen().elements) {
+  for (const element of screen.elements) {
     if (element.visible) stage.append(renderElementSvg(element));
   }
+  if (!screen.elements.length) renderStageMessage(stage, 'Empty screen', 'Add an element to begin laying out this screen.');
   const selected = getSelectedElements();
   if (selected.length) stage.append(renderSelection(selected));
   if (editorState.dragState?.guides?.length) stage.append(renderSnapGuides(editorState.dragState.guides, project.device));
@@ -465,6 +583,30 @@ function renderStage() {
     editorState.shouldCenterStage = false;
     requestAnimationFrame(centerStageInViewport);
   }
+}
+
+function renderStageMessage(stage, title, detail) {
+  const centerX = project.device.width / 2;
+  const centerY = project.device.height / 2;
+  const titleNode = svg('text', {
+    x: centerX,
+    y: centerY - 7,
+    fill: '#d8e4f7',
+    'font-size': 10,
+    'text-anchor': 'middle',
+    'dominant-baseline': 'middle'
+  });
+  titleNode.textContent = title;
+  const detailNode = svg('text', {
+    x: centerX,
+    y: centerY + 8,
+    fill: '#8794a8',
+    'font-size': 6,
+    'text-anchor': 'middle',
+    'dominant-baseline': 'middle'
+  });
+  detailNode.textContent = detail;
+  stage.append(titleNode, detailNode);
 }
 
 function drawGrid(stage) {
@@ -605,7 +747,8 @@ function sparklinePreviewPoints(element) {
 }
 
 function previewAnimationLoop(nowMs) {
-  if (nowMs - lastPreviewAnimationMs > 40 && activeScreen().elements.some((element) => element.visible && element.type === 'sparkline' && element.props.mode === 'wave')) {
+  const screen = activeScreen();
+  if (screen && nowMs - lastPreviewAnimationMs > 40 && screen.elements.some((element) => element.visible && element.type === 'sparkline' && element.props.mode === 'wave')) {
     lastPreviewAnimationMs = nowMs;
     renderStage();
   }
@@ -615,10 +758,14 @@ function previewAnimationLoop(nowMs) {
 function renderLayers() {
   const layers = query('#layers');
   clear(layers);
+  if (!activeScreen()) {
+    layers.innerHTML = '<p class="empty-note"><strong>No screen selected</strong><span>Select a screen to view its layers.</span></p>';
+    return;
+  }
   const selectedIds = new Set(getSelectedIds());
   const elements = visualLayerElements();
   if (!elements.length) {
-    layers.innerHTML = '<p class="muted">No elements on this screen.</p>';
+    layers.innerHTML = '<p class="empty-note"><strong>No elements yet</strong><span>Add a text, button, or shape layer to this screen.</span></p>';
     return;
   }
 
@@ -759,7 +906,7 @@ function updateLayer(elementId, patch) {
 }
 
 function visualLayerElements() {
-  return [...activeScreen().elements].reverse();
+  return [...(activeScreen()?.elements ?? [])].reverse();
 }
 
 function elementTypeLabel(type) {
@@ -770,8 +917,16 @@ function renderInspector() {
   const inspector = query('#inspector');
   const selectedElements = getSelectedElements();
   clear(inspector);
+  if (!project) {
+    inspector.append(emptyNote('No project loaded', 'Create or import a project to start editing.'));
+    return;
+  }
+  if (!activeScreen()) {
+    inspector.append(emptyNote('No screen selected', 'Choose a screen before editing element properties.'));
+    return;
+  }
   if (!selectedElements.length) {
-    inspector.innerHTML = '<p class="muted">Select an element to edit its properties.</p>';
+    inspector.append(emptyNote('No element selected', 'Select a layer or canvas element to edit its properties.'));
     return;
   }
   if (selectedElements.length > 1) {
@@ -829,10 +984,10 @@ function renderInspector() {
 }
 
 function renderMultiSelectionInspector(inspector, elements) {
-  const summary = document.createElement('p');
-  summary.className = 'muted';
+  const summary = document.createElement('div');
+  summary.className = 'empty-note compact';
   const lockedCount = elements.filter((element) => element.locked).length;
-  summary.textContent = `${elements.length} elements selected${lockedCount ? `, ${lockedCount} locked` : ''}`;
+  summary.innerHTML = `<strong>Multiple elements selected</strong><span>${elements.length} elements${lockedCount ? `, ${lockedCount} locked` : ''}. Shared layout actions are available below.</span>`;
 
   const actions = document.createElement('div');
   actions.className = 'mini-actions';
@@ -855,6 +1010,13 @@ function renderMultiSelectionInspector(inspector, elements) {
     <button data-action="delete">Delete</button>
   `;
   inspector.append(summary, actions);
+}
+
+function emptyNote(title, detail) {
+  const note = document.createElement('p');
+  note.className = 'empty-note';
+  note.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>`;
+  return note;
 }
 
 function renderFonts() {
@@ -932,6 +1094,7 @@ async function importProject(file) {
 function setZoom(value) {
   editorStore.setZoom(value);
   renderStage();
+  renderStatusHelp();
 }
 
 function setGridEnabled(enabled) {
@@ -1128,6 +1291,7 @@ function showContextMenu(clientX, clientY, elements) {
     <button data-action="context-delete" class="danger">Delete</button>
   `;
   contextMenu.hidden = false;
+  refreshActionButtons(contextMenu);
   const { innerWidth, innerHeight } = window;
   const rect = contextMenu.getBoundingClientRect();
   contextMenu.style.left = `${Math.min(clientX, innerWidth - rect.width - 8)}px`;
@@ -1136,6 +1300,189 @@ function showContextMenu(clientX, clientY, elements) {
 
 function hideContextMenu() {
   query('#context-menu').hidden = true;
+}
+
+function openCommandPalette() {
+  hideContextMenu();
+  closeShortcutsDialog({ restoreFocus: false });
+  commandPaletteState.lastFocus = document.activeElement;
+  const palette = query('#command-palette');
+  const input = query('#command-palette-input');
+  palette.hidden = false;
+  input.value = '';
+  commandPaletteState.selectedIndex = 0;
+  renderCommandPaletteList();
+  requestAnimationFrame(() => input.focus());
+}
+
+function closeCommandPalette({ restoreFocus = true } = {}) {
+  const palette = query('#command-palette');
+  if (palette.hidden) return false;
+  palette.hidden = true;
+  if (restoreFocus) restoreDialogFocus(commandPaletteState.lastFocus);
+  commandPaletteState.lastFocus = null;
+  return true;
+}
+
+function renderCommandPaletteList() {
+  const list = query('#command-palette-list');
+  const search = query('#command-palette-input').value.trim().toLowerCase();
+  const ctx = createActionContext();
+  commandPaletteState.items = actions
+    .all()
+    .filter((action) => action.palette !== false)
+    .filter((action) => !search || action.label.toLowerCase().includes(search) || action.id.toLowerCase().includes(search))
+    .map((action) => ({ action, available: actions.canRun(action.id, ctx) }))
+    .sort((a, b) => Number(b.available) - Number(a.available) || a.action.label.localeCompare(b.action.label));
+
+  clear(list);
+  if (!commandPaletteState.items.length) {
+    list.append(emptyNote('No actions found', 'Try a different command name.'));
+    return;
+  }
+
+  const firstAvailableIndex = commandPaletteState.items.findIndex((item) => item.available);
+  commandPaletteState.selectedIndex = clamp(commandPaletteState.selectedIndex, 0, commandPaletteState.items.length - 1);
+  if (!commandPaletteState.items[commandPaletteState.selectedIndex]?.available && firstAvailableIndex >= 0) {
+    commandPaletteState.selectedIndex = firstAvailableIndex;
+  }
+
+  commandPaletteState.items.forEach(({ action, available }, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'command-palette-item';
+    button.dataset.commandId = action.id;
+    button.dataset.commandIndex = String(index);
+    button.disabled = !available;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', index === commandPaletteState.selectedIndex ? 'true' : 'false');
+    button.innerHTML = `
+      <span>${escapeHtml(action.label)}</span>
+      <em>${action.shortcut ? escapeHtml(shortcutLabel(action.shortcut)) : available ? '' : 'Unavailable'}</em>
+    `;
+    list.append(button);
+  });
+  refreshCommandPaletteSelection();
+}
+
+function moveCommandPaletteSelection(direction) {
+  const items = commandPaletteState.items;
+  if (!items.length) return;
+  let next = commandPaletteState.selectedIndex;
+  for (let offset = 0; offset < items.length; offset += 1) {
+    next = (next + direction + items.length) % items.length;
+    if (items[next].available) break;
+  }
+  commandPaletteState.selectedIndex = next;
+  refreshCommandPaletteSelection();
+}
+
+function refreshCommandPaletteSelection() {
+  query('#command-palette-list').querySelectorAll('[data-command-id]').forEach((button, index) => {
+    const selected = index === commandPaletteState.selectedIndex;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+    if (selected) button.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+async function runSelectedCommandPaletteAction() {
+  const item = commandPaletteState.items[commandPaletteState.selectedIndex];
+  if (!item?.available) return;
+  const actionId = item.action.id;
+  closeCommandPalette({ restoreFocus: false });
+  await actions.run(actionId, createActionContext());
+}
+
+function openShortcutsDialog() {
+  hideContextMenu();
+  closeCommandPalette({ restoreFocus: false });
+  dialogState.lastFocus = document.activeElement;
+  const dialog = query('#shortcuts-dialog');
+  const list = query('#shortcuts-list');
+  clear(list);
+  const shortcuts = getShortcutEntries(actions);
+  if (!shortcuts.length) {
+    list.append(emptyNote('No shortcuts registered', 'Actions without shortcuts still appear in the command palette.'));
+  } else {
+    shortcuts.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'shortcut-row';
+      row.innerHTML = `<span>${escapeHtml(entry.label)}</span><kbd>${escapeHtml(shortcutLabel(entry.shortcut))}</kbd>`;
+      list.append(row);
+    });
+  }
+  dialog.hidden = false;
+  requestAnimationFrame(() => query('[data-shortcuts-close]').focus());
+}
+
+function closeShortcutsDialog({ restoreFocus = true } = {}) {
+  const dialog = query('#shortcuts-dialog');
+  if (dialog.hidden) return false;
+  dialog.hidden = true;
+  if (restoreFocus) restoreDialogFocus(dialogState.lastFocus);
+  dialogState.lastFocus = null;
+  return true;
+}
+
+function closeTopDialog() {
+  if (closeCommandPalette()) return true;
+  if (closeShortcutsDialog()) return true;
+  return false;
+}
+
+function restoreDialogFocus(target) {
+  if (target && typeof target.focus === 'function' && document.contains(target)) target.focus();
+}
+
+function renderStatusHelp() {
+  const status = query('#status-help');
+  const screen = activeScreen();
+  if (!project) {
+    status.innerHTML = '<span>No project loaded</span>';
+    return;
+  }
+
+  const selected = screen ? getSelectedElements() : [];
+  const selectionText = !screen
+    ? 'No screen selected'
+    : selected.length === 0
+      ? 'No selection'
+      : selected.length === 1
+        ? '1 selected'
+        : `${selected.length} selected`;
+  const hint = !screen
+    ? 'Choose a screen or add one from the Screens panel.'
+    : selected.length
+      ? 'Arrow keys nudge selection. Shift+arrows nudge 5px.'
+      : 'Select an element, or press Ctrl/Cmd+K to run a command.';
+
+  status.innerHTML = `
+    <div class="status-chips">
+      <span>${escapeHtml(selectionText)}</span>
+      <span>Canvas ${project.device.width} x ${project.device.height}</span>
+      <span>Zoom ${formatZoom(editorState.zoom)}</span>
+      <span>${project.grid.enabled ? `Grid ${project.grid.size}px` : 'Grid off'}</span>
+      <span>${project.grid.snap ? 'Snap on' : 'Snap off'}</span>
+      <span>${editorState.smartSnapEnabled ? 'Smart snap on' : 'Smart snap off'}</span>
+    </div>
+    <p>${escapeHtml(hint)}</p>
+  `;
+}
+
+function refreshActionButtons(root = document) {
+  const ctx = createActionContext();
+  root.querySelectorAll('button[data-action]').forEach((button) => {
+    const action = actions.get(button.dataset.action);
+    if (!action) return;
+    const available = actions.canRun(action.id, ctx);
+    button.disabled = !available;
+    button.title = action.shortcut ? `${action.label} (${shortcutLabel(action.shortcut)})` : action.label;
+  });
+}
+
+function formatZoom(value) {
+  return `${Number(value).toFixed(Number.isInteger(value) ? 0 : 2)}x`;
 }
 
 function centerStageInViewport() {

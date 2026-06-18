@@ -29,6 +29,7 @@ import { CAPTURE_MODE, createActionRegistry } from '../src/app/actions/actionReg
 import { registerEditorActions } from '../src/app/actions/editorActions.js';
 import { createEditorStore } from '../src/app/state/editorStore.js';
 import { createProjectStore } from '../src/app/state/projectStore.js';
+import { getShortcutEntries, runKeyboardShortcut, shortcutLabel } from '../src/app/actions/keyboardShortcuts.js';
 
 test('creates a Cardputer project with a start screen', () => {
   const project = createProject();
@@ -57,6 +58,41 @@ test('registers and runs dependency-free editor actions', async () => {
   assert.equal(await registry.run('demo-action', { enabled: true, payload: { value: 2 } }), true);
   assert.deepEqual(calls, [2]);
   assert.equal(registry.get('demo-action').shortcut, 'mod+d');
+});
+
+test('derives keyboard shortcut help and dispatch from registered actions', async () => {
+  const registry = createActionRegistry();
+  const calls = [];
+  registry.registerMany([
+    {
+      id: 'command-palette-open',
+      label: 'Open command palette',
+      shortcut: 'mod+k',
+      run: () => calls.push('palette')
+    },
+    {
+      id: 'shortcuts-open',
+      label: 'Show keyboard shortcuts',
+      shortcut: '?',
+      run: () => calls.push('shortcuts')
+    }
+  ]);
+
+  assert.deepEqual(getShortcutEntries(registry).map((entry) => entry.label), ['Open command palette', 'Show keyboard shortcuts']);
+  assert.equal(shortcutLabel('mod+k'), 'Ctrl/Cmd+K');
+  assert.equal(shortcutLabel('delete/backspace'), 'Delete / Backspace');
+
+  const event = {
+    key: 'k',
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    target: { closest: () => true },
+    preventDefault: () => calls.push('prevented')
+  };
+  assert.equal(await runKeyboardShortcut(event, registry, {}), true);
+  assert.deepEqual(calls, ['prevented', 'palette']);
 });
 
 test('registers core layout and layer actions', () => {

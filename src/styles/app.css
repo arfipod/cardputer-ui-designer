@@ -43,6 +43,32 @@ button:hover,
   background: #1d2635;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button:disabled:hover {
+  border-color: #2c3446;
+  background: #171d29;
+}
+
+.startup-empty {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 0.4rem;
+  padding: 2rem;
+  text-align: center;
+  color: #aebacc;
+  background: #0b0e14;
+}
+
+.startup-empty strong {
+  color: #edf2ff;
+  font-size: 1.05rem;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
@@ -212,6 +238,40 @@ input[type="color"] {
     10px -10px,
     -10px 0;
   background-size: 20px 20px;
+}
+
+.status-help {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 42px;
+  padding: 0.45rem 0.75rem;
+  border-top: 1px solid #202839;
+  background: #0d121b;
+  color: #98a6ba;
+  font-size: 0.78rem;
+}
+
+.status-help p {
+  margin: 0;
+  text-align: right;
+}
+
+.status-chips {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.status-chips span {
+  padding: 0.18rem 0.42rem;
+  border: 1px solid #263147;
+  border-radius: 999px;
+  background: #111827;
+  color: #c8d4e6;
+  white-space: nowrap;
 }
 
 #stage {
@@ -447,6 +507,27 @@ input[type="color"] {
   gap: 0.65rem;
 }
 
+.empty-note {
+  display: grid;
+  gap: 0.18rem;
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px solid #263147;
+  border-radius: 8px;
+  background: #0d131d;
+  color: #8f9bad;
+  font-size: 0.82rem;
+}
+
+.empty-note.compact {
+  padding: 0.55rem 0.65rem;
+}
+
+.empty-note strong {
+  color: #d8e4f7;
+  font-size: 0.88rem;
+}
+
 .color-controls {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -487,6 +568,113 @@ input[type="color"] {
 
 .context-menu .danger {
   color: #ffd1d1;
+}
+
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: start center;
+  padding: 12vh 1rem 1rem;
+  background: rgba(3, 6, 11, 0.62);
+}
+
+.modal-layer[hidden] {
+  display: none;
+}
+
+.command-palette,
+.shortcuts-dialog {
+  width: min(620px, 100%);
+  max-height: min(680px, 78vh);
+  overflow: hidden;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid #334158;
+  border-radius: 10px;
+  background: #101722;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+}
+
+.shortcuts-dialog {
+  width: min(560px, 100%);
+}
+
+.command-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.command-palette-header h2 {
+  margin: 0;
+}
+
+.icon-button {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.command-palette-list,
+.shortcuts-list {
+  min-height: 80px;
+  max-height: min(460px, 56vh);
+  overflow: auto;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.command-palette-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 42px;
+  text-align: left;
+}
+
+.command-palette-item.active {
+  border-color: #68d5ff;
+  background: #1c2a3d;
+}
+
+.command-palette-item em {
+  color: #8f9bad;
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #263147;
+  border-radius: 8px;
+  background: #0d131d;
+}
+
+.shortcut-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+kbd {
+  padding: 0.16rem 0.38rem;
+  border: 1px solid #36445d;
+  border-bottom-color: #222b3b;
+  border-radius: 5px;
+  background: #151d2a;
+  color: #e5eefc;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  white-space: nowrap;
 }
 
 .checkbox-field {
@@ -607,5 +795,13 @@ input[type="color"] {
     align-items: flex-start;
     justify-content: flex-start;
     padding: 1rem;
+  }
+
+  .status-help {
+    grid-template-columns: 1fr;
+  }
+
+  .status-help p {
+    text-align: left;
   }
 }

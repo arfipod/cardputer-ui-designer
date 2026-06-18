@@ -23,6 +23,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'element-add',
       label: 'Add element',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => Boolean(ctx.payload?.type),
       run: (ctx) => commands.addElement(ctx.payload.type)
@@ -30,6 +31,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'project-import',
       label: 'Import project',
+      palette: false,
       capture: CAPTURE_MODE.none,
       canRun: (ctx) => Boolean(ctx.payload?.file),
       run: (ctx) => commands.importProject(ctx.payload.file)
@@ -37,31 +39,57 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'zoom-set',
       label: 'Set zoom',
+      palette: false,
       capture: CAPTURE_MODE.none,
       canRun: (ctx) => Number.isFinite(ctx.payload?.zoom),
       run: (ctx) => commands.setZoom(ctx.payload.zoom)
     },
     {
       id: 'grid-enabled-set',
-      label: 'Toggle grid',
+      label: 'Set grid visibility',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => typeof ctx.payload?.enabled === 'boolean',
       run: (ctx) => commands.setGridEnabled(Boolean(ctx.payload?.enabled))
     },
     {
-      id: 'grid-snap-set',
-      label: 'Toggle snap',
+      id: 'grid-toggle',
+      label: 'Toggle grid',
       capture: CAPTURE_MODE.immediate,
+      run: () => commands.toggleGrid()
+    },
+    {
+      id: 'grid-snap-set',
+      label: 'Set grid snap',
+      palette: false,
+      capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => typeof ctx.payload?.snap === 'boolean',
       run: (ctx) => commands.setGridSnap(Boolean(ctx.payload?.snap))
     },
     {
+      id: 'grid-snap-toggle',
+      label: 'Toggle snap',
+      capture: CAPTURE_MODE.immediate,
+      run: () => commands.toggleGridSnap()
+    },
+    {
       id: 'smart-snap-set',
+      label: 'Set smart snap',
+      palette: false,
+      capture: CAPTURE_MODE.none,
+      canRun: (ctx) => typeof ctx.payload?.enabled === 'boolean',
+      run: (ctx) => commands.setSmartSnapEnabled(Boolean(ctx.payload?.enabled))
+    },
+    {
+      id: 'smart-snap-toggle',
       label: 'Toggle smart snap',
       capture: CAPTURE_MODE.none,
-      run: (ctx) => commands.setSmartSnapEnabled(Boolean(ctx.payload?.enabled))
+      run: () => commands.toggleSmartSnap()
     },
     {
       id: 'grid-size-set',
       label: 'Set grid size',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => Number.isFinite(ctx.payload?.size),
       run: (ctx) => commands.setGridSize(ctx.payload.size)
@@ -69,6 +97,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'device-set',
       label: 'Set device',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => Boolean(ctx.payload?.deviceId),
       run: (ctx) => commands.setDevice(ctx.payload.deviceId)
@@ -84,7 +113,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'delete',
       label: 'Delete',
-      shortcut: 'delete',
+      shortcut: 'delete/backspace',
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.deleteSelected()
@@ -280,6 +309,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'context-duplicate',
       label: 'Duplicate',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => ctx.hasSelection(),
       run: () => commands.duplicateSelected()
@@ -287,6 +317,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'context-center',
       label: 'Center selected',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.centerSelected()
@@ -294,6 +325,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'context-delete',
       label: 'Delete',
+      palette: false,
       capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.deleteSelected()
