@@ -54,6 +54,12 @@ export function registerEditorActions(registry, commands) {
       run: (ctx) => commands.setGridSnap(Boolean(ctx.payload?.snap))
     },
     {
+      id: 'smart-snap-set',
+      label: 'Toggle smart snap',
+      capture: CAPTURE_MODE.none,
+      run: (ctx) => commands.setSmartSnapEnabled(Boolean(ctx.payload?.enabled))
+    },
+    {
       id: 'grid-size-set',
       label: 'Set grid size',
       capture: CAPTURE_MODE.immediate,

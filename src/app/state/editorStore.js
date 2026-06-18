@@ -7,6 +7,7 @@ export function createEditorStore(initialState = {}) {
     hoveredElementId: initialState.hoveredElementId ?? null,
     activeTool: initialState.activeTool ?? null,
     zoom: initialState.zoom ?? 3,
+    smartSnapEnabled: initialState.smartSnapEnabled ?? true,
     dragState: initialState.dragState ?? null,
     shouldCenterStage: initialState.shouldCenterStage ?? true,
     lastStageViewportSize: initialState.lastStageViewportSize ?? ''
@@ -46,6 +47,9 @@ export function createEditorStore(initialState = {}) {
     },
     setZoom(zoom) {
       return this.update({ zoom });
+    },
+    setSmartSnapEnabled(smartSnapEnabled) {
+      return this.update({ smartSnapEnabled });
     },
     setDragState(dragState) {
       return this.update({ dragState });

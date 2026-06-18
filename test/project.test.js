@@ -19,6 +19,7 @@ import { parseDesignProject, serializeProject } from '../src/core/storage.js';
 import { exportFirmwareProject } from '../src/exporters/firmware.js';
 import { exportJson } from '../src/exporters/project.js';
 import { exportXmlProject } from '../src/exporters/xml.js';
+import { smartSnapMove } from '../src/canvas/snapping/snapEngine.js';
 import { CAPTURE_MODE, createActionRegistry } from '../src/app/actions/actionRegistry.js';
 import { createEditorStore } from '../src/app/state/editorStore.js';
 import { createProjectStore } from '../src/app/state/projectStore.js';
@@ -65,7 +66,8 @@ test('keeps project and editor state stores separate', () => {
     selectedElementId: project.screens[0].elements[0].id,
     hoveredElementId: 'hovered',
     activeTool: 'button',
-    zoom: 2
+    zoom: 2,
+    smartSnapEnabled: false
   });
 
   let current = projectStore.getProject();
@@ -79,11 +81,70 @@ test('keeps project and editor state stores separate', () => {
   assert.equal(persisted.selectedElementId, undefined);
   assert.equal(persisted.hoveredElementId, undefined);
   assert.equal(persisted.zoom, undefined);
+  assert.equal(persisted.smartSnapEnabled, undefined);
   assert.equal(persisted.flow.startScreenId, project.flow.startScreenId);
 
   const exported = JSON.parse(exportJson(projectStore.getPersistentProject()).content);
   assert.equal(exported.activeTool, undefined);
   assert.equal(exported.selectedScreenId, undefined);
+  assert.equal(editorStore.getState().smartSnapEnabled, false);
+});
+
+test('smart snapping aligns moved elements to canvas and element guides', () => {
+  const moving = { id: 'moving', x: 0, y: 0, w: 20, h: 10, visible: true };
+  const neighbor = { id: 'neighbor', x: 80, y: 40, w: 30, h: 20, visible: true };
+  const device = { width: 240, height: 135 };
+
+  const center = smartSnapMove({
+    element: moving,
+    x: 108,
+    y: 20,
+    device,
+    elements: [moving, neighbor],
+    zoom: 3
+  });
+  assert.equal(center.x, 110);
+  assert.equal(center.y, 20);
+  assert.deepEqual(center.guides.map((guide) => guide.axis), ['x']);
+
+  const edge = smartSnapMove({
+    element: moving,
+    x: 58,
+    y: 40,
+    device,
+    elements: [moving, neighbor],
+    zoom: 3
+  });
+  assert.equal(edge.x, 60);
+  assert.equal(edge.y, 40);
+  assert.ok(edge.guides.some((guide) => guide.axis === 'x' && guide.value === 80));
+
+  const elementCenter = smartSnapMove({
+    element: moving,
+    x: 84,
+    y: 44,
+    device,
+    elements: [moving, neighbor],
+    zoom: 3
+  });
+  assert.equal(elementCenter.x, 85);
+  assert.equal(elementCenter.y, 45);
+  assert.deepEqual(elementCenter.guides.map((guide) => guide.axis).sort(), ['x', 'y']);
+});
+
+test('smart snapping can be disabled and uses zoom-scaled distance', () => {
+  const moving = { id: 'moving', x: 0, y: 0, w: 20, h: 10, visible: true };
+  const device = { width: 240, height: 135 };
+
+  assert.deepEqual(
+    smartSnapMove({ element: moving, x: 108, y: 63, device, zoom: 3, enabled: false }),
+    { x: 108, y: 63, guides: [] }
+  );
+
+  const lowZoom = smartSnapMove({ element: moving, x: 105, y: 0, device, zoom: 1 });
+  const highZoom = smartSnapMove({ element: moving, x: 105, y: 0, device, zoom: 6 });
+  assert.equal(lowZoom.x, 110);
+  assert.equal(highZoom.x, 105);
 });
 
 test('captures project history by explicit mode', () => {

@@ -28,6 +28,8 @@ import { clamp, snap, svgPoint, valueRatio } from './core/geometry.js';
 import { loadProject, parseDesignProject, saveProject } from './core/storage.js';
 import { exportFirmware, exportJson, exportXml } from './exporters/project.js';
 import { importXmlProject } from './exporters/xml.js';
+import { smartSnapMove } from './canvas/snapping/snapEngine.js';
+import { renderSnapGuides } from './canvas/snapping/snapGuides.js';
 import { createActionRegistry } from './app/actions/actionRegistry.js';
 import { registerEditorActions } from './app/actions/editorActions.js';
 import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
@@ -51,7 +53,10 @@ const ELEMENTS = [
 ];
 
 const projectStore = createProjectStore();
-const editorStore = createEditorStore({ selectedScreenId: projectStore.getProject().flow.startScreenId });
+const editorStore = createEditorStore({
+  selectedScreenId: projectStore.getProject().flow.startScreenId,
+  smartSnapEnabled: loadEditorPreference('smartSnapEnabled', true)
+});
 const editorState = editorStore.getState();
 let project = projectStore.getProject();
 let lastBundle = null;
@@ -145,6 +150,7 @@ function mount() {
           <label>Zoom <input id="zoom" type="range" min="1" max="6" step="0.25" /></label>
           <label>Grid <input id="grid-enabled" type="checkbox" /></label>
           <label>Snap <input id="snap-enabled" type="checkbox" /></label>
+          <label>Smart <input id="smart-snap-enabled" type="checkbox" /></label>
           <label>Grid size <input id="grid-size" type="number" min="1" max="24" /></label>
           <button data-action="center-stage">Center stage</button>
           <button data-action="center">Center selected</button>
@@ -240,6 +246,10 @@ function bindEvents() {
     void actions.run('grid-snap-set', createActionContext({ snap: event.target.checked }));
   });
 
+  query('#smart-snap-enabled').addEventListener('change', (event) => {
+    void actions.run('smart-snap-set', createActionContext({ enabled: event.target.checked }));
+  });
+
   query('#grid-size').addEventListener('change', (event) => {
     void actions.run('grid-size-set', createActionContext({ size: Number(event.target.value) }));
   });
@@ -324,6 +334,7 @@ function createEditorCommands() {
     setGridEnabled,
     setGridSize,
     setGridSnap,
+    setSmartSnapEnabled,
     setStartScreen,
     setZoom,
     undo
@@ -350,6 +361,7 @@ function render() {
   query('#zoom').value = String(editorState.zoom);
   query('#grid-enabled').checked = project.grid.enabled;
   query('#snap-enabled').checked = project.grid.snap;
+  query('#smart-snap-enabled').checked = editorState.smartSnapEnabled;
   query('#grid-size').value = String(project.grid.size);
   query('#device-preset').value = project.device.id;
   query('#device-notes').textContent = `${project.device.width} x ${project.device.height}px. ${project.device.colorDepth}. ${project.device.notes}`;
@@ -419,6 +431,7 @@ function renderStage() {
   }
   const selected = getSelected();
   if (selected) stage.append(renderSelection(selected));
+  if (editorState.dragState?.guides?.length) stage.append(renderSnapGuides(editorState.dragState.guides, project.device));
   if (editorState.shouldCenterStage || viewportChanged) {
     editorState.shouldCenterStage = false;
     requestAnimationFrame(centerStageInViewport);
@@ -723,6 +736,12 @@ function setGridSnap(snapEnabled) {
   render();
 }
 
+function setSmartSnapEnabled(enabled) {
+  editorStore.setSmartSnapEnabled(enabled);
+  saveEditorPreference('smartSnapEnabled', enabled);
+  render();
+}
+
 function setGridSize(size) {
   commit(updateGrid(project, { size: clamp(size, 1, 24) }));
   render();
@@ -921,7 +940,7 @@ function onPointerDown(event) {
   const element = activeScreen().elements.find((item) => item.id === id);
   if (!element || element.locked) return;
   editorState.selectedElementId = id;
-  editorState.dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element) };
+  editorState.dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element), guides: [] };
   query('#stage').setPointerCapture(event.pointerId);
   render();
 }
@@ -938,9 +957,22 @@ function onPointerMove(event) {
   const o = editorState.dragState.original;
   const patch = {};
   if (editorState.dragState.mode === 'move') {
-    patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
-    patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
+    const gridX = snap(o.x + dx, project.grid.size, project.grid.snap);
+    const gridY = snap(o.y + dy, project.grid.size, project.grid.snap);
+    const smart = smartSnapMove({
+      element: o,
+      x: gridX,
+      y: gridY,
+      device: project.device,
+      elements: activeScreen().elements,
+      zoom: editorState.zoom,
+      enabled: editorState.smartSnapEnabled
+    });
+    patch.x = smart.x;
+    patch.y = smart.y;
+    editorState.dragState.guides = smart.guides;
   } else {
+    editorState.dragState.guides = [];
     const right = o.x + o.w;
     const bottom = o.y + o.h;
     if (editorState.dragState.mode.includes('w')) {
@@ -964,6 +996,23 @@ function finishDrag() {
   editorStore.setDragState(null);
   commit(project, { capture: CAPTURE_MODE.immediate });
   render();
+}
+
+function loadEditorPreference(key, fallback) {
+  try {
+    const raw = localStorage.getItem(`cardputer-ui-designer:editor:${key}`);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function saveEditorPreference(key, value) {
+  try {
+    localStorage.setItem(`cardputer-ui-designer:editor:${key}`, JSON.stringify(value));
+  } catch {
+    // Editor preferences are convenience-only; project export remains unaffected.
+  }
 }
 
 function getSelected() {
