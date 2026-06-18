@@ -20,12 +20,16 @@ static constexpr gpio_num_t PIN_MOSI = GPIO_NUM_35;
 static constexpr gpio_num_t PIN_SCLK = GPIO_NUM_36;
 static constexpr gpio_num_t PIN_CS = GPIO_NUM_37;
 
-// The Cardputer Adv LCD is a 135x240 visible window on an ST7789 GRAM.
-// In landscape mode the visible area starts at the controller offsets below.
-static constexpr int PANEL_OFFSET_X = 40;
-static constexpr int PANEL_OFFSET_Y = 52;
-static constexpr int PANEL_NATIVE_W = 240;
-static constexpr int PANEL_NATIVE_H = 135;
+// The Cardputer-Adv uses a 240x135 ST7789V2 panel. The controller exposes it
+// as a 135x240 native window inside a larger GRAM; rotate while flushing so the
+// rest of the UI can keep using the normal landscape 240x135 coordinates.
+static constexpr int PANEL_OFFSET_X = 52;
+static constexpr int PANEL_OFFSET_Y = 40;
+static constexpr int PANEL_NATIVE_W = 135;
+static constexpr int PANEL_NATIVE_H = 240;
+
+static_assert(CardputerDisplay::WIDTH == PANEL_NATIVE_H);
+static_assert(CardputerDisplay::HEIGHT == PANEL_NATIVE_W);
 
 static spi_device_handle_t spi = nullptr;
 
@@ -48,7 +52,7 @@ bool CardputerDisplay::begin() {
   if (!initSpi()) return false;
   resetPanel();
   initPanel();
-  setBrightness(220);
+  setBrightness(255);
   clear(rgb565(0, 0, 0));
   flush();
   ESP_LOGI(TAG, "vanilla ST7789 initialized");
@@ -100,7 +104,7 @@ void CardputerDisplay::initPanel() {
   writeCommand(0x3A);
   writeDataByte(0x55);
   writeCommand(0x36);
-  writeDataByte(0x60);
+  writeDataByte(0x00);
   writeCommand(0x21);
   writeCommand(0x13);
   writeCommand(0x29);
@@ -170,11 +174,13 @@ void CardputerDisplay::setAddressWindowNative(int x, int y, int w, int h) {
 void CardputerDisplay::flush() {
   uint16_t line[PANEL_NATIVE_W];
   setAddressWindowNative(PANEL_OFFSET_X, PANEL_OFFSET_Y, PANEL_NATIVE_W, PANEL_NATIVE_H);
-  for (int y = 0; y < HEIGHT; ++y) {
-    for (int x = 0; x < WIDTH; ++x) {
-      line[x] = swap16(framebuffer_[y * WIDTH + x]);
+  for (int nativeY = 0; nativeY < PANEL_NATIVE_H; ++nativeY) {
+    for (int nativeX = 0; nativeX < PANEL_NATIVE_W; ++nativeX) {
+      const int srcX = nativeY;
+      const int srcY = HEIGHT - 1 - nativeX;
+      line[nativeX] = swap16(framebuffer_[srcY * WIDTH + srcX]);
     }
-    writeData(reinterpret_cast<const uint8_t*>(line), WIDTH * sizeof(uint16_t));
+    writeData(reinterpret_cast<const uint8_t*>(line), PANEL_NATIVE_W * sizeof(uint16_t));
   }
 }
 
@@ -190,21 +196,7 @@ void CardputerDisplay::flushRect(CardputerRect rect) {
   rect = clipRect(rect);
   if (rect.empty()) return;
 
-  const int nativeX = PANEL_OFFSET_X + rect.x;
-  const int nativeY = PANEL_OFFSET_Y + rect.y;
-  const int nativeW = rect.w;
-  const int nativeH = rect.h;
-
-  uint16_t line[PANEL_NATIVE_W];
-  setAddressWindowNative(nativeX, nativeY, nativeW, nativeH);
-  for (int row = 0; row < rect.h; ++row) {
-    const int y = rect.y + row;
-    for (int col = 0; col < rect.w; ++col) {
-      const int x = rect.x + col;
-      line[col] = swap16(framebuffer_[y * WIDTH + x]);
-    }
-    writeData(reinterpret_cast<const uint8_t*>(line), rect.w * sizeof(uint16_t));
-  }
+  flush();
 }
 
 void CardputerDisplay::clear(uint16_t color) {

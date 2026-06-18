@@ -119,8 +119,16 @@ static void show_display_self_test() {
   for (uint16_t color : colors) {
     display.clear(color);
     display.flush();
-    vTaskDelay(pdMS_TO_TICKS(250));
+    vTaskDelay(pdMS_TO_TICKS(600));
   }
+
+  display.clear(CardputerDisplay::rgb565(0x00, 0x00, 0x00));
+  display.fillRect(0, 0, 60, CardputerDisplay::HEIGHT, CardputerDisplay::rgb565(0xff, 0x00, 0x00));
+  display.fillRect(60, 0, 60, CardputerDisplay::HEIGHT, CardputerDisplay::rgb565(0x00, 0xff, 0x00));
+  display.fillRect(120, 0, 60, CardputerDisplay::HEIGHT, CardputerDisplay::rgb565(0x00, 0x00, 0xff));
+  display.fillRect(180, 0, 60, CardputerDisplay::HEIGHT, CardputerDisplay::rgb565(0xff, 0xff, 0xff));
+  display.flush();
+  vTaskDelay(pdMS_TO_TICKS(1200));
 
   display.clear(CardputerDisplay::rgb565(0x00, 0x00, 0x00));
   display.drawText("DISPLAY TEST", 24, 32, CardputerDisplay::rgb565(0xff, 0xff, 0xff), 2);
@@ -128,7 +136,7 @@ static void show_display_self_test() {
   display.drawLine(0, 0, CardputerDisplay::WIDTH - 1, CardputerDisplay::HEIGHT - 1, CardputerDisplay::rgb565(0x00, 0xff, 0xff));
   display.drawLine(CardputerDisplay::WIDTH - 1, 0, 0, CardputerDisplay::HEIGHT - 1, CardputerDisplay::rgb565(0xff, 0x00, 0xff));
   display.flush();
-  vTaskDelay(pdMS_TO_TICKS(700));
+  vTaskDelay(pdMS_TO_TICKS(2000));
 }
 
 static void update_animation() {
