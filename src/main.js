@@ -54,6 +54,16 @@ const ELEMENTS = [
   ['image', 'Image']
 ];
 
+const LEFT_PANEL_WIDTH = {
+  fallback: 280,
+  min: 220,
+  max: 520,
+  step: 16,
+  handle: 8,
+  minWorkspace: 360,
+  rightPanel: 320
+};
+
 const projectStore = createProjectStore();
 const editorStore = createEditorStore({
   selectedScreenId: projectStore.getProject().flow.startScreenId,
@@ -158,6 +168,7 @@ function mount() {
           <div id="layers" class="layers"></div>
         </section>
       </aside>
+      <div class="left-panel-resizer" role="separator" aria-label="Resize left panel" aria-orientation="vertical" tabindex="0"></div>
 
       <main class="workspace">
         <div class="canvas-toolbar">
@@ -261,6 +272,7 @@ function mount() {
       </div>
     </div>
   `;
+  applyLeftPanelWidth(loadEditorPreference('leftPanelWidth', LEFT_PANEL_WIDTH.fallback));
 }
 
 function bindEvents() {
@@ -359,6 +371,7 @@ function bindEvents() {
     }
     void runKeyboardShortcut(event, actions, createActionContext());
   });
+  bindLeftPanelResize();
 
   const palette = query('#command-palette');
   const paletteInput = query('#command-palette-input');
@@ -400,6 +413,77 @@ function bindEvents() {
   shortcutsDialog.addEventListener('click', (event) => {
     if (event.target === shortcutsDialog || event.target.closest?.('[data-shortcuts-close]')) closeShortcutsDialog();
   });
+}
+
+function bindLeftPanelResize() {
+  const resizer = query('.left-panel-resizer');
+  const shell = query('.shell');
+  const updateFromClientX = (clientX) => {
+    const left = shell.getBoundingClientRect().left;
+    applyLeftPanelWidth(clientX - left, true);
+  };
+  const stopResize = (event) => {
+    document.body.classList.remove('resizing-left-panel');
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', stopResize);
+    window.removeEventListener('pointercancel', stopResize);
+    try {
+      resizer.releasePointerCapture(event.pointerId);
+    } catch {
+      // The pointer may already be released by the browser.
+    }
+  };
+  const onMove = (event) => {
+    event.preventDefault();
+    updateFromClientX(event.clientX);
+  };
+
+  resizer.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    document.body.classList.add('resizing-left-panel');
+    resizer.setPointerCapture(event.pointerId);
+    updateFromClientX(event.clientX);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+  });
+  resizer.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const current = currentLeftPanelWidth();
+    const direction = event.key === 'ArrowRight' ? 1 : -1;
+    applyLeftPanelWidth(current + direction * LEFT_PANEL_WIDTH.step, true);
+  });
+  window.addEventListener('resize', () => applyLeftPanelWidth(currentLeftPanelWidth()));
+}
+
+function currentLeftPanelWidth() {
+  const raw = getComputedStyle(query('.shell')).getPropertyValue('--left-panel-width');
+  return Number.parseFloat(raw) || LEFT_PANEL_WIDTH.fallback;
+}
+
+function applyLeftPanelWidth(width, persist = false) {
+  const nextWidth = clampLeftPanelWidth(width);
+  query('.shell').style.setProperty('--left-panel-width', `${nextWidth}px`);
+  const resizer = document.querySelector('.left-panel-resizer');
+  if (resizer) {
+    resizer.setAttribute('aria-valuemin', String(LEFT_PANEL_WIDTH.min));
+    resizer.setAttribute('aria-valuemax', String(maxLeftPanelWidth()));
+    resizer.setAttribute('aria-valuenow', String(nextWidth));
+  }
+  if (persist) saveEditorPreference('leftPanelWidth', nextWidth);
+  return nextWidth;
+}
+
+function clampLeftPanelWidth(width) {
+  return clamp(Number(width) || LEFT_PANEL_WIDTH.fallback, LEFT_PANEL_WIDTH.min, maxLeftPanelWidth());
+}
+
+function maxLeftPanelWidth() {
+  const viewportWidth = window.innerWidth || LEFT_PANEL_WIDTH.fallback;
+  const rightPanelWidth = viewportWidth > 1100 ? LEFT_PANEL_WIDTH.rightPanel : 0;
+  const responsiveMax = viewportWidth - rightPanelWidth - LEFT_PANEL_WIDTH.minWorkspace - LEFT_PANEL_WIDTH.handle;
+  return Math.max(LEFT_PANEL_WIDTH.min, Math.min(LEFT_PANEL_WIDTH.max, responsiveMax));
 }
 
 function createEditorCommands() {
@@ -801,10 +885,6 @@ function renderLayers() {
       selectLayerFromPanel(element.id, event);
     });
 
-    const type = document.createElement('span');
-    type.className = 'layer-type';
-    type.textContent = elementTypeLabel(element.type);
-
     const nameBlock = document.createElement('span');
     nameBlock.className = 'layer-name-block';
     const nameInput = document.createElement('input');
@@ -825,39 +905,31 @@ function renderLayers() {
     nameInput.addEventListener('click', (event) => event.stopPropagation());
     nameInput.addEventListener('keydown', (event) => event.stopPropagation());
     nameInput.addEventListener('change', () => renameLayer(element.id, nameInput.value));
+    const meta = document.createElement('span');
+    meta.className = 'layer-meta';
+    const type = document.createElement('span');
+    type.className = 'layer-type';
+    type.textContent = elementTypeLabel(element.type);
     const idLabel = document.createElement('em');
     idLabel.textContent = element.id;
-    nameBlock.append(nameInput, idLabel);
-    summary.append(type, nameBlock);
+    meta.append(type, idLabel);
+    nameBlock.append(nameInput, meta);
+    summary.append(nameBlock);
 
     const stateControls = document.createElement('div');
     stateControls.className = 'layer-state-controls';
-    if (hasOwn(element, 'visible')) {
-      stateControls.append(layerControlButton(element.visible === false ? 'Hidden' : 'Visible', element.visible === false ? 'Show layer' : 'Hide layer', () => {
-        updateLayer(element.id, { visible: element.visible === false });
-      }, element.visible === false ? 'muted-button' : ''));
-    }
     if (hasOwn(element, 'locked')) {
-      stateControls.append(layerControlButton(element.locked ? 'Locked' : 'Open', element.locked ? 'Unlock layer' : 'Lock layer', () => {
+      stateControls.append(layerIconButton(element.locked ? 'lock' : 'unlock', element.locked ? 'Unlock layer' : 'Lock layer', () => {
         updateLayer(element.id, { locked: !element.locked });
-      }, element.locked ? 'locked-button' : ''));
+      }, element.locked ? 'locked-button' : '', element.locked));
+    }
+    if (hasOwn(element, 'visible')) {
+      stateControls.append(layerIconButton(element.visible === false ? 'eyeOff' : 'eye', element.visible === false ? 'Show layer' : 'Hide layer', () => {
+        updateLayer(element.id, { visible: element.visible === false });
+      }, element.visible === false ? 'muted-button' : '', element.visible !== false));
     }
 
-    const orderControls = document.createElement('div');
-    orderControls.className = 'layer-order-controls';
-    [
-      ['top', 'Top'],
-      ['up', 'Up'],
-      ['down', 'Down'],
-      ['bottom', 'Bottom']
-    ].forEach(([direction, label]) => {
-      orderControls.append(layerControlButton(label, `${label} layer`, async () => {
-        if (!getSelectedIds().includes(element.id)) editorStore.selectElement(element.id);
-        await actions.run(`layer-${direction}`, createActionContext());
-      }));
-    });
-
-    row.append(summary, stateControls, orderControls);
+    row.append(summary, stateControls);
     layers.append(row);
   });
 }
@@ -884,18 +956,30 @@ function selectLayerFromPanel(elementId, event) {
   render();
 }
 
-function layerControlButton(label, title, onClick, className = '') {
+function layerIconButton(icon, title, onClick, className = '', pressed = false) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = className;
+  button.className = `layer-icon-button ${className}`.trim();
   button.title = title;
-  button.textContent = label;
+  button.setAttribute('aria-label', title);
+  button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+  button.innerHTML = layerIconSvg(icon);
   button.addEventListener('click', async (event) => {
     event.stopPropagation();
     await onClick(event);
     render();
   });
   return button;
+}
+
+function layerIconSvg(icon) {
+  const icons = {
+    eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+    eyeOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18"></path><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2"></path><path d="M9.9 5.2A11 11 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-3.1 4.1"></path><path d="M6.6 6.7A17.5 17.5 0 0 0 2 12s3.5 7 10 7c1.4 0 2.6-.3 3.8-.8"></path></svg>',
+    lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>',
+    unlock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 7.4-2.1"></path></svg>'
+  };
+  return icons[icon] ?? '';
 }
 
 function refreshLayerSelectionState() {
