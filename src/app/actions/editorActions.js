@@ -190,6 +190,8 @@ export function registerEditorActions(registry, commands) {
       ['backward', 'Send backward'],
       ['front', 'Bring to front'],
       ['back', 'Send to back'],
+      ['top', 'Move to top'],
+      ['bottom', 'Move to bottom'],
       ['up', 'Bring forward'],
       ['down', 'Send backward']
     ].map(([direction, label]) => ({

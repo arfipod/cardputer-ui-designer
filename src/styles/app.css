@@ -80,7 +80,7 @@ button:hover,
 
 .brand span,
 .muted,
-.layer em {
+.layer-row em {
   color: #8f9bad;
   font-size: 0.82rem;
 }
@@ -272,7 +272,7 @@ input[type="color"] {
 
 .layers {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.45rem;
 }
 
 .stack-list {
@@ -324,17 +324,122 @@ input[type="color"] {
   background: #0d131d;
 }
 
-.layer {
+.layer-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.5rem;
-  text-align: left;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  padding: 0.45rem;
+  border: 1px solid #263147;
+  border-radius: 8px;
+  background: #0d131d;
 }
 
-.layer.active {
+.layer-row.active {
   border-color: #68d5ff;
-  background: #223046;
+  background: #18273b;
+}
+
+.layer-row.locked {
+  border-color: #5c4b2c;
+}
+
+.layer-row.hidden-layer {
+  opacity: 0.7;
+}
+
+.layer-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.layer-summary:focus-visible {
+  outline: 2px solid #68d5ff;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.layer-type {
+  overflow: hidden;
+  color: #b4bfd1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-name-block {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.layer-name-input {
+  height: 28px;
+  min-width: 0;
+  padding: 0.28rem 0.38rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.layer-name-block em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+}
+
+.layer-state-controls,
+.layer-order-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.layer-state-controls {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.layer-order-controls {
+  grid-column: 1 / -1;
+}
+
+.layer-row button {
+  min-height: 28px;
+  padding: 0.26rem 0.38rem;
+  border-radius: 6px;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.layer-row .muted-button {
+  color: #9aa6b8;
+  background: #0a0f17;
+}
+
+.layer-row .locked-button {
+  color: #ffe1aa;
+  border-color: #6b572f;
+  background: #201a10;
+}
+
+@media (min-width: 1320px) {
+  .layer-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .layer-state-controls,
+  .layer-order-controls {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }
 
 .inspector {

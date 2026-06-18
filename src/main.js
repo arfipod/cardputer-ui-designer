@@ -138,10 +138,10 @@ function mount() {
         <section>
           <h2>Layers</h2>
           <div class="layer-actions">
-            <button data-action="layer-forward">Forward</button>
-            <button data-action="layer-backward">Backward</button>
-            <button data-action="layer-front">Front</button>
-            <button data-action="layer-back">Back</button>
+            <button data-action="layer-top">Top</button>
+            <button data-action="layer-up">Up</button>
+            <button data-action="layer-down">Down</button>
+            <button data-action="layer-bottom">Bottom</button>
           </div>
           <div id="layers" class="layers"></div>
         </section>
@@ -616,17 +616,154 @@ function renderLayers() {
   const layers = query('#layers');
   clear(layers);
   const selectedIds = new Set(getSelectedIds());
-  [...activeScreen().elements].reverse().forEach((element) => {
-    const row = document.createElement('button');
-    row.className = `layer ${selectedIds.has(element.id) ? 'active' : ''}`;
-    row.innerHTML = `<span>${element.locked ? 'L' : element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
-    row.addEventListener('click', (event) => {
-      if (event.shiftKey || event.ctrlKey || event.metaKey) editorStore.toggleElementSelection(element.id);
-      else editorStore.selectElement(element.id);
-      render();
+  const elements = visualLayerElements();
+  if (!elements.length) {
+    layers.innerHTML = '<p class="muted">No elements on this screen.</p>';
+    return;
+  }
+
+  elements.forEach((element) => {
+    const row = document.createElement('div');
+    row.className = `layer-row ${selectedIds.has(element.id) ? 'active' : ''}${element.locked ? ' locked' : ''}${element.visible === false ? ' hidden-layer' : ''}`;
+    row.dataset.layerId = element.id;
+
+    const summary = document.createElement('div');
+    summary.className = 'layer-summary';
+    summary.tabIndex = 0;
+    summary.setAttribute('role', 'button');
+    summary.setAttribute('aria-pressed', selectedIds.has(element.id) ? 'true' : 'false');
+    summary.addEventListener('click', (event) => selectLayerFromPanel(element.id, event));
+    summary.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectLayerFromPanel(element.id, event);
     });
+
+    const type = document.createElement('span');
+    type.className = 'layer-type';
+    type.textContent = elementTypeLabel(element.type);
+
+    const nameBlock = document.createElement('span');
+    nameBlock.className = 'layer-name-block';
+    const nameInput = document.createElement('input');
+    nameInput.className = 'layer-name-input';
+    nameInput.type = 'text';
+    nameInput.value = element.name ?? '';
+    nameInput.placeholder = element.id;
+    nameInput.setAttribute('aria-label', `Layer name for ${element.id}`);
+    nameInput.addEventListener('focus', () => {
+      if (!getSelectedIds().includes(element.id)) {
+        editorStore.selectElement(element.id);
+        editorState.selectedTransitionId = null;
+        renderStage();
+        renderInspector();
+        refreshLayerSelectionState();
+      }
+    });
+    nameInput.addEventListener('click', (event) => event.stopPropagation());
+    nameInput.addEventListener('keydown', (event) => event.stopPropagation());
+    nameInput.addEventListener('change', () => renameLayer(element.id, nameInput.value));
+    const idLabel = document.createElement('em');
+    idLabel.textContent = element.id;
+    nameBlock.append(nameInput, idLabel);
+    summary.append(type, nameBlock);
+
+    const stateControls = document.createElement('div');
+    stateControls.className = 'layer-state-controls';
+    if (hasOwn(element, 'visible')) {
+      stateControls.append(layerControlButton(element.visible === false ? 'Hidden' : 'Visible', element.visible === false ? 'Show layer' : 'Hide layer', () => {
+        updateLayer(element.id, { visible: element.visible === false });
+      }, element.visible === false ? 'muted-button' : ''));
+    }
+    if (hasOwn(element, 'locked')) {
+      stateControls.append(layerControlButton(element.locked ? 'Locked' : 'Open', element.locked ? 'Unlock layer' : 'Lock layer', () => {
+        updateLayer(element.id, { locked: !element.locked });
+      }, element.locked ? 'locked-button' : ''));
+    }
+
+    const orderControls = document.createElement('div');
+    orderControls.className = 'layer-order-controls';
+    [
+      ['top', 'Top'],
+      ['up', 'Up'],
+      ['down', 'Down'],
+      ['bottom', 'Bottom']
+    ].forEach(([direction, label]) => {
+      orderControls.append(layerControlButton(label, `${label} layer`, async () => {
+        if (!getSelectedIds().includes(element.id)) editorStore.selectElement(element.id);
+        await actions.run(`layer-${direction}`, createActionContext());
+      }));
+    });
+
+    row.append(summary, stateControls, orderControls);
     layers.append(row);
   });
+}
+
+function selectLayerFromPanel(elementId, event) {
+  if (event.shiftKey) {
+    const layerIds = visualLayerElements().map((element) => element.id);
+    const selectedIds = getSelectedIds();
+    const anchorId = selectedIds.at(-1) ?? elementId;
+    const anchorIndex = layerIds.indexOf(anchorId);
+    const targetIndex = layerIds.indexOf(elementId);
+    if (anchorIndex >= 0 && targetIndex >= 0) {
+      const [start, end] = [anchorIndex, targetIndex].sort((a, b) => a - b);
+      editorStore.selectElements(layerIds.slice(start, end + 1));
+    } else {
+      editorStore.selectElement(elementId);
+    }
+  } else if (event.ctrlKey || event.metaKey) {
+    editorStore.toggleElementSelection(elementId);
+  } else {
+    editorStore.selectElement(elementId);
+  }
+  editorState.selectedTransitionId = null;
+  render();
+}
+
+function layerControlButton(label, title, onClick, className = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.title = title;
+  button.textContent = label;
+  button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    await onClick(event);
+    render();
+  });
+  return button;
+}
+
+function refreshLayerSelectionState() {
+  const selectedIds = new Set(getSelectedIds());
+  query('#layers').querySelectorAll('.layer-row').forEach((row) => {
+    const active = selectedIds.has(row.dataset.layerId);
+    row.classList.toggle('active', active);
+    row.querySelector('.layer-summary')?.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function renameLayer(elementId, name) {
+  const element = getElement(project, editorState.selectedScreenId, elementId);
+  if (!element) return;
+  commit(updateElement(project, editorState.selectedScreenId, elementId, { name: name.trim() || element.id }));
+  editorStore.selectElement(elementId);
+  render();
+}
+
+function updateLayer(elementId, patch) {
+  commit(updateElement(project, editorState.selectedScreenId, elementId, patch));
+  editorStore.selectElement(elementId);
+}
+
+function visualLayerElements() {
+  return [...activeScreen().elements].reverse();
+}
+
+function elementTypeLabel(type) {
+  return ELEMENTS.find(([value]) => value === type)?.[1] ?? type;
 }
 
 function renderInspector() {
@@ -1242,9 +1379,10 @@ function nudge(key, amount) {
 }
 
 function moveSelectedLayer(direction) {
+  const normalizedDirection = direction === 'top' ? 'front' : direction === 'bottom' ? 'back' : direction;
   const selectedIds = getEditableSelectedElements().map((element) => element.id);
   if (!selectedIds.length) return;
-  commit(moveLayers(project, editorState.selectedScreenId, selectedIds, direction));
+  commit(moveLayers(project, editorState.selectedScreenId, selectedIds, normalizedDirection));
   editorStore.selectElements(getSelectedIds());
   render();
 }

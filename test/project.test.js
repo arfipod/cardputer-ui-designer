@@ -86,6 +86,8 @@ test('registers core layout and layer actions', () => {
     'layer-backward',
     'layer-front',
     'layer-back',
+    'layer-top',
+    'layer-bottom',
     'lock',
     'unlock'
   ].forEach((id) => assert.ok(registry.get(id), `${id} should be registered`));
@@ -291,15 +293,25 @@ test('moves multiple layers while preserving selected order', () => {
 
   project = moveLayers(project, screenId, ['b', 'c'], 'back');
   assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['b', 'c', 'a', 'd']);
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'top');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['a', 'd', 'b', 'c']);
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'bottom');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['b', 'c', 'a', 'd']);
 });
 
-test('normalizes missing locked flags for backward-compatible projects', () => {
+test('normalizes missing layer fields for backward-compatible projects', () => {
   const project = createProject();
   const raw = structuredClone(project);
   delete raw.screens[0].elements[0].locked;
+  delete raw.screens[0].elements[0].visible;
+  delete raw.screens[0].elements[0].name;
 
   const parsed = parseDesignProject(JSON.stringify(raw));
   assert.equal(parsed.screens[0].elements[0].locked, false);
+  assert.equal(parsed.screens[0].elements[0].visible, true);
+  assert.equal(parsed.screens[0].elements[0].name, parsed.screens[0].elements[0].type);
 });
 
 test('migrates version 2 documents without losing elements', () => {

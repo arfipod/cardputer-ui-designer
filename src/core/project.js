@@ -228,8 +228,8 @@ export function moveLayer(project, screenId, id, direction) {
     const index = elements.findIndex((element) => element.id === id);
     if (index < 0) return elements;
     const [element] = elements.splice(index, 1);
-    if (direction === 'front') elements.push(element);
-    if (direction === 'back') elements.unshift(element);
+    if (direction === 'front' || direction === 'top') elements.push(element);
+    if (direction === 'back' || direction === 'bottom') elements.unshift(element);
     if (direction === 'up') elements.splice(Math.min(index + 1, elements.length), 0, element);
     if (direction === 'down') elements.splice(Math.max(index - 1, 0), 0, element);
     return elements;
@@ -241,8 +241,8 @@ export function moveLayers(project, screenId, ids, direction) {
   if (!idSet.size) return project;
   return updateScreenElements(project, screenId, (source) => {
     const elements = [...source];
-    if (direction === 'front') return [...elements.filter((element) => !idSet.has(element.id)), ...elements.filter((element) => idSet.has(element.id))];
-    if (direction === 'back') return [...elements.filter((element) => idSet.has(element.id)), ...elements.filter((element) => !idSet.has(element.id))];
+    if (direction === 'front' || direction === 'top') return [...elements.filter((element) => !idSet.has(element.id)), ...elements.filter((element) => idSet.has(element.id))];
+    if (direction === 'back' || direction === 'bottom') return [...elements.filter((element) => idSet.has(element.id)), ...elements.filter((element) => !idSet.has(element.id))];
     if (direction === 'forward' || direction === 'up') {
       for (let index = elements.length - 2; index >= 0; index -= 1) {
         if (idSet.has(elements[index].id) && !idSet.has(elements[index + 1].id)) {
