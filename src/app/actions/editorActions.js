@@ -8,7 +8,7 @@ export function registerEditorActions(registry, commands) {
       id: 'undo',
       label: 'Undo',
       shortcut: 'mod+z',
-      capture: CAPTURE_MODE.immediate,
+      capture: CAPTURE_MODE.none,
       canRun: (ctx) => ctx.canUndo(),
       run: () => commands.undo()
     },
@@ -16,7 +16,7 @@ export function registerEditorActions(registry, commands) {
       id: 'redo',
       label: 'Redo',
       shortcut: 'mod+y',
-      capture: CAPTURE_MODE.immediate,
+      capture: CAPTURE_MODE.none,
       canRun: (ctx) => ctx.canRedo(),
       run: () => commands.redo()
     },
@@ -30,7 +30,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'project-import',
       label: 'Import project',
-      capture: CAPTURE_MODE.immediate,
+      capture: CAPTURE_MODE.none,
       canRun: (ctx) => Boolean(ctx.payload?.file),
       run: (ctx) => commands.importProject(ctx.payload.file)
     },
@@ -99,7 +99,7 @@ export function registerEditorActions(registry, commands) {
     {
       id: 'reset',
       label: 'New',
-      capture: CAPTURE_MODE.immediate,
+      capture: CAPTURE_MODE.none,
       run: () => commands.resetProject()
     },
     {
@@ -152,7 +152,7 @@ export function registerEditorActions(registry, commands) {
       id: 'nudge',
       label: 'Nudge selected',
       shortcut: 'arrow keys',
-      capture: CAPTURE_MODE.ephemeral,
+      capture: CAPTURE_MODE.immediate,
       canRun: (ctx) => ctx.hasSelection() && Boolean(ctx.payload?.key),
       run: (ctx) => commands.nudge(ctx.payload.key, ctx.payload.amount)
     },

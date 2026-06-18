@@ -32,6 +32,7 @@ import { createActionRegistry } from './app/actions/actionRegistry.js';
 import { registerEditorActions } from './app/actions/editorActions.js';
 import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
 import { createEditorStore } from './app/state/editorStore.js';
+import { CAPTURE_MODE } from './app/state/history.js';
 import { createProjectStore, firstElementId } from './app/state/projectStore.js';
 import { activeScreen as selectActiveScreen, selectedElement as selectSelectedElement, selectedScreenExists } from './app/state/selectors.js';
 
@@ -700,7 +701,7 @@ async function importProject(file) {
   const imported = file.name.endsWith('.xml') || raw.includes('<!-- ===== project.xml ===== -->')
     ? importXmlProject(raw)
     : parseDesignProject(raw);
-  commit(imported);
+  project = projectStore.replaceProject(imported);
   editorState.selectedScreenId = imported.flow.startScreenId;
   editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   await registerProjectFonts(project);
@@ -734,7 +735,7 @@ function setDevicePreset(deviceId) {
 
 function resetProject() {
   if (!confirm('Create a new project?')) return;
-  commit(createProject());
+  project = projectStore.replaceProject(createProject());
   editorState.selectedScreenId = project.flow.startScreenId;
   editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   render();
@@ -953,7 +954,7 @@ function onPointerMove(event) {
     if (editorState.dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
     if (editorState.dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
   }
-  project = projectStore.setProject(updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch), { recordHistory: false });
+  project = projectStore.setProject(updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch), { capture: CAPTURE_MODE.ephemeral });
   renderStage();
   renderInspector();
 }
@@ -961,7 +962,7 @@ function onPointerMove(event) {
 function finishDrag() {
   if (!editorState.dragState) return;
   editorStore.setDragState(null);
-  commit(project);
+  commit(project, { capture: CAPTURE_MODE.immediate });
   render();
 }
 
@@ -1021,8 +1022,8 @@ function moveSelectedLayer(direction) {
   render();
 }
 
-function commit(next) {
-  project = projectStore.commit(next);
+function commit(next, options) {
+  project = projectStore.commit(next, options);
   reconcileEditorSelection();
 }
 

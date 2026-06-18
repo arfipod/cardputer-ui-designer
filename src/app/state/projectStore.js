@@ -1,53 +1,42 @@
 import { createProject, getScreen, migrateProject } from '../../core/project.js';
+import { CAPTURE_MODE, createSnapshotHistory } from './history.js';
 
 export function createProjectStore(initialProject = createProject()) {
   let project = migrateProject(initialProject);
-  let history = [snapshot(project)];
-  let future = [];
+  const history = createSnapshotHistory(project, {
+    serialize: snapshot,
+    parse: parseSnapshot
+  });
 
   return {
     getProject: () => project,
-    setProject(nextProject, { recordHistory = true } = {}) {
+    setProject(nextProject, options = {}) {
       project = migrateProject(nextProject);
-      if (recordHistory) pushHistory();
+      history.capture(project, captureMode(options));
       return project;
     },
-    commit(nextProject) {
+    commit(nextProject, options = {}) {
       project = migrateProject(nextProject);
-      pushHistory();
+      history.capture(project, captureMode({ capture: CAPTURE_MODE.immediate, ...options }));
       return project;
     },
     replaceProject(nextProject) {
       project = migrateProject(nextProject);
-      history = [snapshot(project)];
-      future = [];
+      history.reset(project);
       return project;
     },
     undo() {
-      if (history.length <= 1) return project;
-      const current = history.pop();
-      if (current) future.push(current);
-      project = parseSnapshot(history.at(-1));
+      project = history.undo() ?? project;
       return project;
     },
     redo() {
-      const next = future.pop();
-      if (!next) return project;
-      history.push(next);
-      project = parseSnapshot(next);
+      project = history.redo() ?? project;
       return project;
     },
-    canUndo: () => history.length > 1,
-    canRedo: () => future.length > 0,
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
     getPersistentProject: () => migrateProject(project)
   };
-
-  function pushHistory() {
-    const raw = snapshot(project);
-    if (history.at(-1) !== raw) history.push(raw);
-    if (history.length > 80) history = history.slice(-80);
-    future = [];
-  }
 }
 
 export function firstElementId(project, screenId) {
@@ -60,4 +49,10 @@ function snapshot(project) {
 
 function parseSnapshot(raw) {
   return migrateProject(raw ? JSON.parse(raw) : createProject());
+}
+
+function captureMode({ capture, recordHistory } = {}) {
+  if (capture) return capture;
+  if (recordHistory === false) return CAPTURE_MODE.ephemeral;
+  return CAPTURE_MODE.immediate;
 }

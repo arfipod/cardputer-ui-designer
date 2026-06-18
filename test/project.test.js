@@ -86,6 +86,30 @@ test('keeps project and editor state stores separate', () => {
   assert.equal(exported.selectedScreenId, undefined);
 });
 
+test('captures project history by explicit mode', () => {
+  const initial = createProject();
+  const screenId = initial.flow.startScreenId;
+  const elementId = initial.screens[0].elements[0].id;
+  const originalX = initial.screens[0].elements[0].x;
+  const projectStore = createProjectStore(initial);
+
+  let current = updateElement(projectStore.getProject(), screenId, elementId, { x: originalX + 10 });
+  projectStore.setProject(current, { capture: CAPTURE_MODE.ephemeral });
+  current = updateElement(projectStore.getProject(), screenId, elementId, { x: originalX + 20 });
+  projectStore.setProject(current, { capture: CAPTURE_MODE.ephemeral });
+  const finalX = projectStore.getProject().screens[0].elements[0].x;
+  assert.equal(projectStore.canUndo(), false);
+
+  projectStore.commit(projectStore.getProject(), { capture: CAPTURE_MODE.immediate });
+  assert.equal(projectStore.canUndo(), true);
+  assert.equal(projectStore.undo().screens[0].elements[0].x, originalX);
+  assert.equal(projectStore.redo().screens[0].elements[0].x, finalX);
+
+  current = updateElement(projectStore.getProject(), screenId, elementId, { x: originalX + 30 });
+  projectStore.replaceProject(current);
+  assert.equal(projectStore.canUndo(), false);
+});
+
 test('migrates version 2 documents without losing elements', () => {
   const legacy = createDocument();
   const project = parseDesignProject(JSON.stringify(legacy));

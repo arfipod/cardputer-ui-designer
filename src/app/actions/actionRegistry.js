@@ -1,8 +1,6 @@
-export const CAPTURE_MODE = Object.freeze({
-  immediate: 'immediate',
-  ephemeral: 'ephemeral',
-  none: 'none'
-});
+import { CAPTURE_MODE } from '../state/history.js';
+
+export { CAPTURE_MODE };
 
 // Tiny dependency-free registry for editor commands. Actions describe metadata
 // and receive the current editor context when they run.
