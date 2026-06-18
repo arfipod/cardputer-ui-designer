@@ -16,7 +16,7 @@ static const CardputerTransition transitions[] = {
 
 static void draw_main() {
   if (!ui_display) return;
-  auto& display = *ui_display;
+  CardputerDisplay& display = *ui_display;
   display.clear(CardputerDisplay::rgb565(0, 0, 0));
 
   // Panel (roundRect) id=panel-1
@@ -65,7 +65,7 @@ CardputerScreenId cardputer_ui_handle_event(CardputerScreenId current, Cardputer
 }
 
 CardputerScreenId cardputer_ui_handle_element_event(CardputerScreenId current, const char* elementId, CardputerUiEvent event) {
-  for (const auto& transition : transitions) {
+  for (const CardputerTransition& transition : transitions) {
     const bool element_matches = elementId == nullptr || transition.element_id == nullptr || strcmp(transition.element_id, elementId) == 0;
     if (transition.from == current && transition.event == event && element_matches) return transition.to;
   }

@@ -13,7 +13,7 @@ class CardputerAdvDisplay : public lgfx::LGFX_Device {
 public:
   CardputerAdvDisplay() {
     {
-      auto cfg = bus_.config();
+      lgfx::Bus_SPI::config_t cfg = bus_.config();
       cfg.spi_host = SPI3_HOST;
       cfg.spi_mode = 0;
       cfg.freq_write = 40000000;
@@ -30,7 +30,7 @@ public:
     }
 
     {
-      auto cfg = panel_.config();
+      lgfx::Panel_ST7789::config_t cfg = panel_.config();
       cfg.pin_cs = 37;
       cfg.pin_rst = 33;
       cfg.pin_busy = -1;
@@ -52,7 +52,7 @@ public:
     }
 
     {
-      auto cfg = backlight_.config();
+      lgfx::Light_PWM::config_t cfg = backlight_.config();
       cfg.pin_bl = 38;
       cfg.invert = false;
       cfg.freq = 256;

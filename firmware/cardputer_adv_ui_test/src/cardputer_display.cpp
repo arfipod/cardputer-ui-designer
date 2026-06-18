@@ -20,8 +20,10 @@ static constexpr gpio_num_t PIN_MOSI = GPIO_NUM_35;
 static constexpr gpio_num_t PIN_SCLK = GPIO_NUM_36;
 static constexpr gpio_num_t PIN_CS = GPIO_NUM_37;
 
-static constexpr int PANEL_OFFSET_X = 0;
-static constexpr int PANEL_OFFSET_Y = 0;
+// The Cardputer Adv LCD is a 135x240 visible window on an ST7789 GRAM.
+// In landscape mode the visible area starts at the controller offsets below.
+static constexpr int PANEL_OFFSET_X = 40;
+static constexpr int PANEL_OFFSET_Y = 52;
 static constexpr int PANEL_NATIVE_W = 240;
 static constexpr int PANEL_NATIVE_H = 135;
 
