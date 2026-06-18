@@ -5,13 +5,15 @@ import {
   addFont,
   addScreen,
   addTransition,
+  alignElements,
   cleanupFlow,
   createProject,
+  distributeElements,
   duplicateElements,
   duplicateScreen,
   getElement,
   getScreen,
-  moveLayer,
+  moveLayers,
   removeElements,
   removeFont,
   removeScreen,
@@ -136,8 +138,8 @@ function mount() {
         <section>
           <h2>Layers</h2>
           <div class="layer-actions">
-            <button data-action="layer-up">Up</button>
-            <button data-action="layer-down">Down</button>
+            <button data-action="layer-forward">Forward</button>
+            <button data-action="layer-backward">Backward</button>
             <button data-action="layer-front">Front</button>
             <button data-action="layer-back">Back</button>
           </div>
@@ -154,6 +156,26 @@ function mount() {
           <label>Grid size <input id="grid-size" type="number" min="1" max="24" /></label>
           <button data-action="center-stage">Center stage</button>
           <button data-action="center">Center selected</button>
+          <div class="toolbar-group">
+            <button data-action="align-left">Left</button>
+            <button data-action="align-hcenter">H center</button>
+            <button data-action="align-right">Right</button>
+            <button data-action="align-top">Top</button>
+            <button data-action="align-vcenter">V center</button>
+            <button data-action="align-bottom">Bottom</button>
+          </div>
+          <div class="toolbar-group">
+            <button data-action="distribute-horizontal">Distribute H</button>
+            <button data-action="distribute-vertical">Distribute V</button>
+          </div>
+          <div class="toolbar-group">
+            <button data-action="layer-forward">Forward</button>
+            <button data-action="layer-backward">Backward</button>
+            <button data-action="layer-front">Front</button>
+            <button data-action="layer-back">Back</button>
+          </div>
+          <button data-action="lock">Lock</button>
+          <button data-action="unlock">Unlock</button>
           <button data-action="duplicate">Duplicate</button>
           <button data-action="delete">Delete</button>
           <button data-action="reset">New</button>
@@ -308,6 +330,7 @@ function createEditorCommands() {
     addElement: addNewElement,
     addScreen: addNewScreen,
     addTransitionFromSelected,
+    alignSelected,
     centerSelected,
     centerStage: centerStageInViewport,
     clearTerminal: clearFirmwareTerminal,
@@ -325,6 +348,7 @@ function createEditorCommands() {
     exportPng,
     exportXml: () => showBundle(exportXml(projectStore.getPersistentProject())),
     importProject,
+    lockSelected: () => setSelectedLocked(true),
     moveSelectedLayer,
     nudge,
     redo,
@@ -337,7 +361,9 @@ function createEditorCommands() {
     setSmartSnapEnabled,
     setStartScreen,
     setZoom,
-    undo
+    undo,
+    unlockSelected: () => setSelectedLocked(false),
+    distributeSelected
   };
 }
 
@@ -348,9 +374,12 @@ function createActionContext(payload) {
     canRedo: () => projectStore.canRedo(),
     canUndo: () => projectStore.canUndo(),
     hasBundle: () => Boolean(lastBundle),
+    hasEditableSelection: (minimum = 1) => getEditableSelectedElements().length >= minimum,
+    hasLockedSelection: () => getSelectedElements().some((element) => element.locked),
     hasSelectedAsset: () => Boolean(editorState.selectedAssetId),
     hasSelection: () => getSelectedIds().length > 0,
-    hasTransition: () => Boolean(editorState.selectedTransitionId)
+    hasTransition: () => Boolean(editorState.selectedTransitionId),
+    hasUnlockedSelection: () => getSelectedElements().some((element) => !element.locked)
   };
 }
 
@@ -446,7 +475,7 @@ function drawGrid(stage) {
 }
 
 function renderElementSvg(element) {
-  const group = svg('g', { class: `element element-${element.type}`, 'data-id': element.id });
+  const group = svg('g', { class: `element element-${element.type}${element.locked ? ' locked' : ''}`, 'data-id': element.id });
   const p = element.props;
 
   if (element.type === 'rect') group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, fill: p.fill, stroke: p.stroke }));
@@ -539,11 +568,12 @@ function renderElementSvg(element) {
 function renderSelection(elements) {
   const bounds = elementBounds(elements);
   if (!bounds) return svg('g', { class: 'selection' });
-  const group = svg('g', { class: 'selection' });
+  const group = svg('g', { class: `selection${elements.every((element) => element.locked) ? ' locked' : ''}` });
   const isMulti = elements.length > 1;
   group.append(svg('rect', { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h, fill: 'transparent', stroke: '#ffffff', 'stroke-dasharray': '3 2', 'pointer-events': isMulti ? 'visibleStroke' : 'none', ...(isMulti ? { 'data-selection': 'multi' } : {}) }));
   if (isMulti) return group;
   const element = elements[0];
+  if (element.locked) return group;
   [
     ['resize-nw', element.x, element.y],
     ['resize-ne', element.x + element.w, element.y],
@@ -589,7 +619,7 @@ function renderLayers() {
   [...activeScreen().elements].reverse().forEach((element) => {
     const row = document.createElement('button');
     row.className = `layer ${selectedIds.has(element.id) ? 'active' : ''}`;
-    row.innerHTML = `<span>${element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
+    row.innerHTML = `<span>${element.locked ? 'L' : element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
     row.addEventListener('click', (event) => {
       if (event.shiftKey || event.ctrlKey || event.metaKey) editorStore.toggleElementSelection(element.id);
       else editorStore.selectElement(element.id);
@@ -614,10 +644,10 @@ function renderInspector() {
   const element = selectedElements[0];
   inspector.append(
     inputField('Name', 'text', element.name, (value) => change({ name: value })),
-    inputField('X', 'number', element.x, (value) => change({ x: Number(value) })),
-    inputField('Y', 'number', element.y, (value) => change({ y: Number(value) })),
-    inputField('W', 'number', element.w, (value) => change({ w: Number(value) })),
-    inputField('H', 'number', element.h, (value) => change({ h: Number(value) })),
+    inputField('X', 'number', element.x, (value) => change({ x: Number(value) }), { disabled: element.locked }),
+    inputField('Y', 'number', element.y, (value) => change({ y: Number(value) }), { disabled: element.locked }),
+    inputField('W', 'number', element.w, (value) => change({ w: Number(value) }), { disabled: element.locked }),
+    inputField('H', 'number', element.h, (value) => change({ h: Number(value) }), { disabled: element.locked }),
     checkboxField('Visible', element.visible, (checked) => change({ visible: checked })),
     checkboxField('Locked', element.locked, (checked) => change({ locked: checked }))
   );
@@ -664,11 +694,26 @@ function renderInspector() {
 function renderMultiSelectionInspector(inspector, elements) {
   const summary = document.createElement('p');
   summary.className = 'muted';
-  summary.textContent = `${elements.length} elements selected`;
+  const lockedCount = elements.filter((element) => element.locked).length;
+  summary.textContent = `${elements.length} elements selected${lockedCount ? `, ${lockedCount} locked` : ''}`;
 
   const actions = document.createElement('div');
   actions.className = 'mini-actions';
   actions.innerHTML = `
+    <button data-action="align-left">Left</button>
+    <button data-action="align-hcenter">H center</button>
+    <button data-action="align-right">Right</button>
+    <button data-action="align-top">Top</button>
+    <button data-action="align-vcenter">V center</button>
+    <button data-action="align-bottom">Bottom</button>
+    <button data-action="distribute-horizontal">Distribute H</button>
+    <button data-action="distribute-vertical">Distribute V</button>
+    <button data-action="layer-forward">Forward</button>
+    <button data-action="layer-backward">Backward</button>
+    <button data-action="layer-front">Front</button>
+    <button data-action="layer-back">Back</button>
+    <button data-action="lock">Lock</button>
+    <button data-action="unlock">Unlock</button>
     <button data-action="duplicate">Duplicate</button>
     <button data-action="delete">Delete</button>
   `;
@@ -867,13 +912,14 @@ function colorField(label, value, onChange) {
   return wrapper;
 }
 
-function inputField(label, type, value, onChange) {
+function inputField(label, type, value, onChange, options = {}) {
   const wrapper = document.createElement('label');
   wrapper.className = 'field';
   wrapper.textContent = label;
   const input = document.createElement('input');
   input.type = type;
   input.value = String(value);
+  input.disabled = Boolean(options.disabled);
   input.addEventListener('change', () => onChange(input.value));
   wrapper.append(input);
   return wrapper;
@@ -926,6 +972,20 @@ function showContextMenu(clientX, clientY, elements) {
   const contextMenu = query('#context-menu');
   contextMenu.innerHTML = `
     <strong>${label}</strong>
+    <button data-action="align-left">Align left</button>
+    <button data-action="align-hcenter">Align H center</button>
+    <button data-action="align-right">Align right</button>
+    <button data-action="align-top">Align top</button>
+    <button data-action="align-vcenter">Align V center</button>
+    <button data-action="align-bottom">Align bottom</button>
+    <button data-action="distribute-horizontal">Distribute H</button>
+    <button data-action="distribute-vertical">Distribute V</button>
+    <button data-action="layer-forward">Bring forward</button>
+    <button data-action="layer-backward">Send backward</button>
+    <button data-action="layer-front">Bring to front</button>
+    <button data-action="layer-back">Send to back</button>
+    <button data-action="lock">Lock</button>
+    <button data-action="unlock">Unlock</button>
     <button data-action="context-duplicate">Duplicate</button>
     <button data-action="context-center">Center selected</button>
     <button data-action="context-delete" class="danger">Delete</button>
@@ -1096,6 +1156,10 @@ function getSelectedElements() {
   return selectSelectedElements(project, editorState);
 }
 
+function getEditableSelectedElements() {
+  return getSelectedElements().filter((element) => !element.locked);
+}
+
 function activeScreen() {
   return selectActiveScreen(project, editorState);
 }
@@ -1122,10 +1186,14 @@ function reconcileEditorSelection({ resetElement = false } = {}) {
 }
 
 function deleteSelected() {
-  const selectedIds = getSelectedIds();
-  if (!selectedIds.length) return;
-  commit(removeElements(project, editorState.selectedScreenId, selectedIds));
-  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
+  const selected = getSelectedElements();
+  const deletableIds = selected.filter((element) => !element.locked).map((element) => element.id);
+  if (!deletableIds.length) return;
+  const lockedIds = selected.filter((element) => element.locked).map((element) => element.id);
+  commit(removeElements(project, editorState.selectedScreenId, deletableIds));
+  const remainingLockedIds = lockedIds.filter((id) => activeScreen().elements.some((element) => element.id === id));
+  if (remainingLockedIds.length) editorStore.selectElements(remainingLockedIds);
+  else editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   render();
 }
 
@@ -1140,7 +1208,7 @@ function duplicateSelected() {
 }
 
 function centerSelected() {
-  const selected = getSelectedElements().filter((element) => !element.locked);
+  const selected = getEditableSelectedElements();
   const bounds = elementBounds(selected);
   if (!bounds) return;
   const moveX = Math.round((project.device.width - bounds.w) / 2) - bounds.x;
@@ -1149,8 +1217,22 @@ function centerSelected() {
   render();
 }
 
+function alignSelected(alignment) {
+  const selected = getEditableSelectedElements();
+  if (selected.length < 2) return;
+  commit(alignElements(project, editorState.selectedScreenId, selected.map((element) => element.id), alignment));
+  render();
+}
+
+function distributeSelected(axis) {
+  const selected = getEditableSelectedElements();
+  if (selected.length < 3) return;
+  commit(distributeElements(project, editorState.selectedScreenId, selected.map((element) => element.id), axis));
+  render();
+}
+
 function nudge(key, amount) {
-  const selected = getSelectedElements().filter((element) => !element.locked);
+  const selected = getEditableSelectedElements();
   if (!selected.length) return;
   commit(updateElementsFromOriginals(selected, (element) => ({
     x: element.x + (key === 'ArrowLeft' ? -amount : key === 'ArrowRight' ? amount : 0),
@@ -1160,9 +1242,19 @@ function nudge(key, amount) {
 }
 
 function moveSelectedLayer(direction) {
+  const selectedIds = getEditableSelectedElements().map((element) => element.id);
+  if (!selectedIds.length) return;
+  commit(moveLayers(project, editorState.selectedScreenId, selectedIds, direction));
+  editorStore.selectElements(getSelectedIds());
+  render();
+}
+
+function setSelectedLocked(locked) {
+  const selected = getSelectedElements().filter((element) => element.locked !== locked);
+  if (!selected.length) return;
   const selectedIds = getSelectedIds();
-  if (selectedIds.length !== 1) return;
-  commit(moveLayer(project, editorState.selectedScreenId, selectedIds[0], direction));
+  commit(updateElementsFromOriginals(selected, () => ({ locked })));
+  editorStore.selectElements(selectedIds);
   render();
 }
 

@@ -5,10 +5,13 @@ import {
   addFont,
   addScreen,
   addTransition,
+  alignElements,
   cleanupFlow,
   createProject,
+  distributeElements,
   duplicateElements,
   duplicateScreen,
+  moveLayers,
   removeElements,
   removeScreen,
   updateElement
@@ -23,6 +26,7 @@ import { exportJson } from '../src/exporters/project.js';
 import { exportXmlProject } from '../src/exporters/xml.js';
 import { smartSnapMove } from '../src/canvas/snapping/snapEngine.js';
 import { CAPTURE_MODE, createActionRegistry } from '../src/app/actions/actionRegistry.js';
+import { registerEditorActions } from '../src/app/actions/editorActions.js';
 import { createEditorStore } from '../src/app/state/editorStore.js';
 import { createProjectStore } from '../src/app/state/projectStore.js';
 
@@ -53,6 +57,38 @@ test('registers and runs dependency-free editor actions', async () => {
   assert.equal(await registry.run('demo-action', { enabled: true, payload: { value: 2 } }), true);
   assert.deepEqual(calls, [2]);
   assert.equal(registry.get('demo-action').shortcut, 'mod+d');
+});
+
+test('registers core layout and layer actions', () => {
+  const registry = createActionRegistry();
+  registerEditorActions(registry, {
+    alignSelected() {},
+    centerSelected() {},
+    deleteSelected() {},
+    distributeSelected() {},
+    duplicateSelected() {},
+    moveSelectedLayer() {},
+    nudge() {},
+    lockSelected() {},
+    unlockSelected() {}
+  });
+
+  [
+    'align-left',
+    'align-hcenter',
+    'align-right',
+    'align-top',
+    'align-vcenter',
+    'align-bottom',
+    'distribute-horizontal',
+    'distribute-vertical',
+    'layer-forward',
+    'layer-backward',
+    'layer-front',
+    'layer-back',
+    'lock',
+    'unlock'
+  ].forEach((id) => assert.ok(registry.get(id), `${id} should be registered`));
 });
 
 test('keeps project and editor state stores separate', () => {
@@ -208,6 +244,62 @@ test('multi-element project operations capture as one undoable change', () => {
   assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === first.id), false);
   assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === second.id), false);
   assert.equal(projectStore.undo().screens[0].elements.some((element) => element.id === first.id), true);
+});
+
+test('aligns and distributes selected elements', () => {
+  let project = createProject();
+  const screenId = project.flow.startScreenId;
+  project = {
+    ...project,
+    screens: project.screens.map((screen) => screen.id === screenId
+      ? {
+          ...screen,
+          elements: [
+            { id: 'a', type: 'rect', name: 'A', x: 10, y: 10, w: 10, h: 10, visible: true, locked: false, events: {}, props: {} },
+            { id: 'b', type: 'rect', name: 'B', x: 50, y: 20, w: 20, h: 20, visible: true, locked: false, events: {}, props: {} },
+            { id: 'c', type: 'rect', name: 'C', x: 110, y: 30, w: 10, h: 10, visible: true, locked: false, events: {}, props: {} }
+          ]
+        }
+      : screen)
+  };
+
+  project = alignElements(project, screenId, ['a', 'b'], 'right');
+  assert.equal(project.screens[0].elements[0].x, 60);
+  assert.equal(project.screens[0].elements[1].x, 50);
+
+  project = distributeElements(project, screenId, ['a', 'b', 'c'], 'horizontal');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.x), [85, 50, 110]);
+});
+
+test('moves multiple layers while preserving selected order', () => {
+  let project = createProject();
+  const screenId = project.flow.startScreenId;
+  const elements = ['a', 'b', 'c', 'd'].map((id) => ({ id, type: 'rect', name: id, x: 0, y: 0, w: 1, h: 1, visible: true, locked: false, events: {}, props: {} }));
+  project = {
+    ...project,
+    screens: project.screens.map((screen) => screen.id === screenId ? { ...screen, elements } : screen)
+  };
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'forward');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['a', 'd', 'b', 'c']);
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'backward');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['a', 'b', 'c', 'd']);
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'front');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['a', 'd', 'b', 'c']);
+
+  project = moveLayers(project, screenId, ['b', 'c'], 'back');
+  assert.deepEqual(project.screens[0].elements.map((element) => element.id), ['b', 'c', 'a', 'd']);
+});
+
+test('normalizes missing locked flags for backward-compatible projects', () => {
+  const project = createProject();
+  const raw = structuredClone(project);
+  delete raw.screens[0].elements[0].locked;
+
+  const parsed = parseDesignProject(JSON.stringify(raw));
+  assert.equal(parsed.screens[0].elements[0].locked, false);
 });
 
 test('migrates version 2 documents without losing elements', () => {

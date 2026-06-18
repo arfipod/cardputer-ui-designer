@@ -86,15 +86,53 @@ export function registerEditorActions(registry, commands) {
       label: 'Delete',
       shortcut: 'delete',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.deleteSelected()
     },
     {
       id: 'center',
       label: 'Center selected',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.centerSelected()
+    },
+    ...[
+      ['left', 'Align left'],
+      ['hcenter', 'Align horizontal center'],
+      ['right', 'Align right'],
+      ['top', 'Align top'],
+      ['vcenter', 'Align vertical center'],
+      ['bottom', 'Align bottom']
+    ].map(([alignment, label]) => ({
+      id: `align-${alignment}`,
+      label,
+      capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => ctx.hasEditableSelection(2),
+      run: () => commands.alignSelected(alignment)
+    })),
+    ...[
+      ['horizontal', 'Distribute horizontally'],
+      ['vertical', 'Distribute vertically']
+    ].map(([axis, label]) => ({
+      id: `distribute-${axis}`,
+      label,
+      capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => ctx.hasEditableSelection(3),
+      run: () => commands.distributeSelected(axis)
+    })),
+    {
+      id: 'lock',
+      label: 'Lock selected',
+      capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => ctx.hasUnlockedSelection(),
+      run: () => commands.lockSelected()
+    },
+    {
+      id: 'unlock',
+      label: 'Unlock selected',
+      capture: CAPTURE_MODE.immediate,
+      canRun: (ctx) => ctx.hasLockedSelection(),
+      run: () => commands.unlockSelected()
     },
     {
       id: 'center-stage',
@@ -147,11 +185,18 @@ export function registerEditorActions(registry, commands) {
       canRun: (ctx) => ctx.hasTransition(),
       run: () => commands.deleteSelectedTransition()
     },
-    ...['up', 'down', 'front', 'back'].map((direction) => ({
+    ...[
+      ['forward', 'Bring forward'],
+      ['backward', 'Send backward'],
+      ['front', 'Bring to front'],
+      ['back', 'Send to back'],
+      ['up', 'Bring forward'],
+      ['down', 'Send backward']
+    ].map(([direction, label]) => ({
       id: `layer-${direction}`,
-      label: `Layer ${direction}`,
+      label,
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.moveSelectedLayer(direction)
     })),
     {
@@ -159,7 +204,7 @@ export function registerEditorActions(registry, commands) {
       label: 'Nudge selected',
       shortcut: 'arrow keys',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection() && Boolean(ctx.payload?.key),
+      canRun: (ctx) => ctx.hasEditableSelection() && Boolean(ctx.payload?.key),
       run: (ctx) => commands.nudge(ctx.payload.key, ctx.payload.amount)
     },
     {
@@ -241,14 +286,14 @@ export function registerEditorActions(registry, commands) {
       id: 'context-center',
       label: 'Center selected',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.centerSelected()
     },
     {
       id: 'context-delete',
       label: 'Delete',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.deleteSelected()
     }
   ]);

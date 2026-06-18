@@ -173,6 +173,55 @@ export function duplicateElements(project, screenId, ids) {
   });
 }
 
+export function alignElements(project, screenId, ids, alignment) {
+  const idSet = new Set(ids);
+  const screen = getScreen(project, screenId);
+  const targets = screen.elements.filter((element) => idSet.has(element.id));
+  if (targets.length < 2) return project;
+
+  const bounds = elementBounds(targets);
+  return updateScreenElements(project, screenId, (elements) =>
+    elements.map((element) => {
+      if (!idSet.has(element.id)) return element;
+      if (alignment === 'left') return clampElementToDevice({ ...element, x: bounds.left }, project.device);
+      if (alignment === 'hcenter') return clampElementToDevice({ ...element, x: Math.round(bounds.left + bounds.w / 2 - element.w / 2) }, project.device);
+      if (alignment === 'right') return clampElementToDevice({ ...element, x: bounds.right - element.w }, project.device);
+      if (alignment === 'top') return clampElementToDevice({ ...element, y: bounds.top }, project.device);
+      if (alignment === 'vcenter') return clampElementToDevice({ ...element, y: Math.round(bounds.top + bounds.h / 2 - element.h / 2) }, project.device);
+      if (alignment === 'bottom') return clampElementToDevice({ ...element, y: bounds.bottom - element.h }, project.device);
+      return element;
+    })
+  );
+}
+
+export function distributeElements(project, screenId, ids, axis) {
+  const idSet = new Set(ids);
+  const screen = getScreen(project, screenId);
+  const targets = screen.elements.filter((element) => idSet.has(element.id));
+  if (targets.length < 3) return project;
+
+  const horizontal = axis === 'horizontal';
+  const sorted = [...targets].sort((a, b) => horizontal ? a.x - b.x || a.y - b.y : a.y - b.y || a.x - b.x);
+  const bounds = elementBounds(sorted);
+  const totalSize = sorted.reduce((sum, element) => sum + (horizontal ? element.w : element.h), 0);
+  const gap = ((horizontal ? bounds.w : bounds.h) - totalSize) / (sorted.length - 1);
+  const positions = new Map();
+  let cursor = horizontal ? bounds.left : bounds.top;
+
+  sorted.forEach((element) => {
+    positions.set(element.id, Math.round(cursor));
+    cursor += (horizontal ? element.w : element.h) + gap;
+  });
+
+  return updateScreenElements(project, screenId, (elements) =>
+    elements.map((element) => {
+      if (!positions.has(element.id)) return element;
+      const position = positions.get(element.id);
+      return clampElementToDevice(horizontal ? { ...element, x: position } : { ...element, y: position }, project.device);
+    })
+  );
+}
+
 export function moveLayer(project, screenId, id, direction) {
   return updateScreenElements(project, screenId, (source) => {
     const elements = [...source];
@@ -183,6 +232,31 @@ export function moveLayer(project, screenId, id, direction) {
     if (direction === 'back') elements.unshift(element);
     if (direction === 'up') elements.splice(Math.min(index + 1, elements.length), 0, element);
     if (direction === 'down') elements.splice(Math.max(index - 1, 0), 0, element);
+    return elements;
+  });
+}
+
+export function moveLayers(project, screenId, ids, direction) {
+  const idSet = new Set(ids);
+  if (!idSet.size) return project;
+  return updateScreenElements(project, screenId, (source) => {
+    const elements = [...source];
+    if (direction === 'front') return [...elements.filter((element) => !idSet.has(element.id)), ...elements.filter((element) => idSet.has(element.id))];
+    if (direction === 'back') return [...elements.filter((element) => idSet.has(element.id)), ...elements.filter((element) => !idSet.has(element.id))];
+    if (direction === 'forward' || direction === 'up') {
+      for (let index = elements.length - 2; index >= 0; index -= 1) {
+        if (idSet.has(elements[index].id) && !idSet.has(elements[index + 1].id)) {
+          [elements[index], elements[index + 1]] = [elements[index + 1], elements[index]];
+        }
+      }
+    }
+    if (direction === 'backward' || direction === 'down') {
+      for (let index = 1; index < elements.length; index += 1) {
+        if (idSet.has(elements[index].id) && !idSet.has(elements[index - 1].id)) {
+          [elements[index], elements[index - 1]] = [elements[index - 1], elements[index]];
+        }
+      }
+    }
     return elements;
   });
 }
@@ -383,6 +457,14 @@ function normalizeElement(element) {
     events: normalizeEvents(element.events),
     props: { ...(element.props ?? {}) }
   };
+}
+
+function elementBounds(elements) {
+  const left = Math.min(...elements.map((element) => element.x));
+  const top = Math.min(...elements.map((element) => element.y));
+  const right = Math.max(...elements.map((element) => element.x + element.w));
+  const bottom = Math.max(...elements.map((element) => element.y + element.h));
+  return { left, top, right, bottom, w: right - left, h: bottom - top };
 }
 
 function normalizeEvents(events) {

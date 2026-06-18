@@ -89,7 +89,8 @@ button:hover,
 .canvas-toolbar,
 .layer-actions,
 .mini-actions,
-.output-actions {
+.output-actions,
+.toolbar-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -140,6 +141,12 @@ h2 {
   background: #0d121b;
 }
 
+.toolbar-group {
+  gap: 0.25rem;
+  padding-inline: 0.35rem;
+  border-inline: 1px solid #263147;
+}
+
 .canvas-toolbar label,
 .field,
 .checkbox-field {
@@ -164,6 +171,13 @@ textarea {
   background: #0b1018;
   color: #edf2ff;
   padding: 0.48rem 0.55rem;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 input[type="range"],
@@ -232,6 +246,10 @@ input[type="color"] {
   cursor: grab;
 }
 
+.element.locked {
+  cursor: default;
+}
+
 .element text[data-m5gfx-text-size] {
   text-rendering: optimizeSpeed;
   paint-order: stroke fill;
@@ -246,6 +264,10 @@ input[type="color"] {
   stroke: #0a1220;
   stroke-width: 0.75;
   cursor: nwse-resize;
+}
+
+.selection.locked rect {
+  stroke: #f6c177;
 }
 
 .layers {
@@ -330,6 +352,8 @@ input[type="color"] {
   position: fixed;
   z-index: 10;
   min-width: 170px;
+  max-height: min(520px, calc(100vh - 16px));
+  overflow: auto;
   display: grid;
   gap: 0.35rem;
   padding: 0.5rem;
