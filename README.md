@@ -130,6 +130,42 @@ npm run firmware:monitor
 
 The uploader auto-detects ESP32-S3 USB Serial/JTAG devices with `VID:PID=303A:1001`. The runtime logs `cardputer_ui_runtime: UI alive screen=0` when it has booted.
 
+### Framebuffer Debug Dump
+
+The firmware can dump the full RGB565 framebuffer over the same USB serial port used by the monitor. Open the monitor, then type one of these commands and press Enter:
+
+```text
+fb
+fb logical
+widgets
+ui
+```
+
+`fb` returns the framebuffer in `native_panel` order: the exact 135 x 240 RGB565 stream order sent to the ST7789 panel after the Cardputer-Adv rotation transform. `fb logical` returns the designer/runtime framebuffer in normal 240 x 135 landscape coordinates.
+
+`widgets` switches the device to the built-in widget gallery. The gallery exercises the complete firmware UI widget set: Text, Button, Panel, Rect, Line, Progress in horizontal and 90-degree vertical orientation, Gauge, LED, Icon, Sparkline, and Image. Use `ui` to switch back to the UI generated from the web designer.
+
+The dump is delimited so tools can capture it reliably:
+
+```text
+CARDPUTER_FRAMEBUFFER_BEGIN
+format=RGB565_HEX_BE
+order=native_panel
+logical_width=240
+logical_height=135
+native_width=135
+native_height=240
+dump_width=135
+dump_height=240
+bytes=64800
+checksum_fnv1a=0x...
+data:
+...
+CARDPUTER_FRAMEBUFFER_END
+```
+
+Each pixel is one four-character RGB565 hex word in big-endian/readable order, so `F800` is red, `07E0` is green, and `001F` is blue. A complete dump is `64800` bytes of pixel data encoded as hex text.
+
 ## Repository Structure
 
 ```text
@@ -200,6 +236,8 @@ CardputerScreenId cardputer_ui_handle_element_event(CardputerScreenId current, c
 ```
 
 The bundled PlatformIO runtime calls `cardputer_ui_init(&display)`, draws `CARDPUTER_UI_START_SCREEN`, and runs separate FreeRTOS tasks for keyboard input and display/screen transitions.
+
+For low-level display debugging, `CardputerDisplay::dumpFramebuffer(stdout, CardputerFramebufferDumpOrder::NativePanel)` writes the exact panel-order framebuffer described above. Use `CardputerFramebufferDumpOrder::Logical` when you want the unrotated 240 x 135 designer coordinate space.
 
 Uploaded TTF fonts are previewed in the browser and exported as bitmap subsets. By default, variants use the `0x20-0x7F` glyph range plus any extra symbols configured in the font panel.
 

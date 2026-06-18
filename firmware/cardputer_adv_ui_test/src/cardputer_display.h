@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdio.h>
 #include <stdint.h>
 
 struct CardputerRect {
@@ -9,6 +10,11 @@ struct CardputerRect {
   int h = 0;
 
   bool empty() const { return w <= 0 || h <= 0; }
+};
+
+enum class CardputerFramebufferDumpOrder {
+  Logical,
+  NativePanel,
 };
 
 class CardputerDisplay {
@@ -22,6 +28,7 @@ class CardputerDisplay {
   void flush();
   void flushRect(CardputerRect rect);
   CardputerRect clipRect(CardputerRect rect) const;
+  void dumpFramebuffer(FILE* out = stdout, CardputerFramebufferDumpOrder order = CardputerFramebufferDumpOrder::NativePanel) const;
 
   void drawPixel(int x, int y, uint16_t color);
   void drawLine(int x0, int y0, int x1, int y1, uint16_t color);

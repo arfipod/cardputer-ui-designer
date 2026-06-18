@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <algorithm>
+#include <stdio.h>
 #include <string.h>
 
 static const char* TAG = "cardputer_display";
@@ -35,6 +36,14 @@ static spi_device_handle_t spi = nullptr;
 
 static uint16_t swap16(uint16_t value) {
   return static_cast<uint16_t>((value << 8) | (value >> 8));
+}
+
+static uint32_t framebufferChecksum(uint32_t checksum, uint16_t color) {
+  checksum ^= static_cast<uint8_t>(color >> 8);
+  checksum *= 16777619U;
+  checksum ^= static_cast<uint8_t>(color);
+  checksum *= 16777619U;
+  return checksum;
 }
 
 bool CardputerDisplay::begin() {
@@ -197,6 +206,61 @@ void CardputerDisplay::flushRect(CardputerRect rect) {
   if (rect.empty()) return;
 
   flush();
+}
+
+void CardputerDisplay::dumpFramebuffer(FILE* out, CardputerFramebufferDumpOrder order) const {
+  if (!out || !framebuffer_) return;
+
+  const bool native = order == CardputerFramebufferDumpOrder::NativePanel;
+  const int dumpWidth = native ? PANEL_NATIVE_W : WIDTH;
+  const int dumpHeight = native ? PANEL_NATIVE_H : HEIGHT;
+  uint32_t checksum = 2166136261U;
+
+  for (int y = 0; y < dumpHeight; ++y) {
+    for (int x = 0; x < dumpWidth; ++x) {
+      const int srcX = native ? y : x;
+      const int srcY = native ? HEIGHT - 1 - x : y;
+      checksum = framebufferChecksum(checksum, framebuffer_[srcY * WIDTH + srcX]);
+    }
+  }
+
+  fprintf(out, "CARDPUTER_FRAMEBUFFER_BEGIN\n");
+  fprintf(out, "format=RGB565_HEX_BE\n");
+  fprintf(out, "order=%s\n", native ? "native_panel" : "logical");
+  fprintf(out, "logical_width=%d\n", WIDTH);
+  fprintf(out, "logical_height=%d\n", HEIGHT);
+  fprintf(out, "native_width=%d\n", PANEL_NATIVE_W);
+  fprintf(out, "native_height=%d\n", PANEL_NATIVE_H);
+  fprintf(out, "panel_offset_x=%d\n", PANEL_OFFSET_X);
+  fprintf(out, "panel_offset_y=%d\n", PANEL_OFFSET_Y);
+  fprintf(out, "dump_width=%d\n", dumpWidth);
+  fprintf(out, "dump_height=%d\n", dumpHeight);
+  fprintf(out, "bytes=%d\n", dumpWidth * dumpHeight * 2);
+  fprintf(out, "checksum_fnv1a=0x%08lx\n", static_cast<unsigned long>(checksum));
+  fprintf(out, "data:\n");
+
+  static constexpr char HEX[] = "0123456789ABCDEF";
+  char line[WIDTH * 4 + 1];
+
+  for (int y = 0; y < dumpHeight; ++y) {
+    for (int x = 0; x < dumpWidth; ++x) {
+      const int srcX = native ? y : x;
+      const int srcY = native ? HEIGHT - 1 - x : y;
+      const uint16_t pixel = framebuffer_[srcY * WIDTH + srcX];
+      const int offset = x * 4;
+      line[offset] = HEX[(pixel >> 12) & 0x0F];
+      line[offset + 1] = HEX[(pixel >> 8) & 0x0F];
+      line[offset + 2] = HEX[(pixel >> 4) & 0x0F];
+      line[offset + 3] = HEX[pixel & 0x0F];
+    }
+    line[dumpWidth * 4] = '\0';
+    fprintf(out, "%s\n", line);
+    fflush(out);
+    vTaskDelay(pdMS_TO_TICKS(25));
+  }
+
+  fprintf(out, "CARDPUTER_FRAMEBUFFER_END\n");
+  fflush(out);
 }
 
 void CardputerDisplay::clear(uint16_t color) {
