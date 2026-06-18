@@ -353,11 +353,12 @@ function bindEvents() {
   });
 
   const stage = query('#stage');
-  stage.addEventListener('pointerdown', onPointerDown);
-  stage.addEventListener('pointermove', onPointerMove);
-  stage.addEventListener('pointerup', finishDrag);
-  stage.addEventListener('pointercancel', finishDrag);
-  stage.addEventListener('pointerout', () => editorStore.setHoveredElement(null));
+  const stageWrap = query('#stage-wrap');
+  stageWrap.addEventListener('pointerdown', onPointerDown);
+  stageWrap.addEventListener('pointermove', onPointerMove);
+  stageWrap.addEventListener('pointerup', finishDrag);
+  stageWrap.addEventListener('pointercancel', finishDrag);
+  stageWrap.addEventListener('pointerleave', () => editorStore.setHoveredElement(null));
   stage.addEventListener('contextmenu', onStageContextMenu);
   document.addEventListener('click', hideContextMenu);
   document.addEventListener('contextmenu', (event) => {
@@ -872,6 +873,8 @@ function renderLayers() {
     const row = document.createElement('div');
     row.className = `layer-row ${selectedIds.has(element.id) ? 'active' : ''}${element.locked ? ' locked' : ''}${element.visible === false ? ' hidden-layer' : ''}`;
     row.dataset.layerId = element.id;
+    row.dataset.depth = String(element.layerDepth ?? 0);
+    row.style.setProperty('--layer-depth', String(element.layerDepth ?? 0));
 
     const summary = document.createElement('div');
     summary.className = 'layer-summary';
@@ -1005,11 +1008,113 @@ function updateLayer(elementId, patch) {
 }
 
 function visualLayerElements() {
-  return [...(activeScreen()?.elements ?? [])].reverse();
+  return flattenLayerTree(activeScreen()?.elements ?? []);
 }
 
 function elementTypeLabel(type) {
   return ELEMENTS.find(([value]) => value === type)?.[1] ?? type;
+}
+
+function flattenLayerTree(elements) {
+  const ids = new Set(elements.map((element) => element.id));
+  const childrenByParent = new Map();
+  const roots = [];
+  for (const element of elements) {
+    const parentId = ids.has(element.parentId) ? element.parentId : '';
+    if (!parentId) roots.push(element);
+    else {
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+      childrenByParent.get(parentId).push(element);
+    }
+  }
+  const ordered = [];
+  const visited = new Set();
+  const visit = (element, depth, seen = new Set()) => {
+    if (seen.has(element.id)) return;
+    visited.add(element.id);
+    ordered.push({ ...element, layerDepth: depth });
+    const nextSeen = new Set(seen).add(element.id);
+    for (const child of [...(childrenByParent.get(element.id) ?? [])].reverse()) visit(child, depth + 1, nextSeen);
+  };
+  for (const root of [...roots].reverse()) visit(root, 0);
+  for (const element of [...elements].reverse()) {
+    if (!visited.has(element.id)) visit(element, 0);
+  }
+  return ordered;
+}
+
+function parentOptionsFor(element) {
+  const descendants = descendantIdsFor(element.id);
+  return [
+    ['', 'None'],
+    ...activeScreen().elements
+      .filter((candidate) => candidate.id !== element.id && !descendants.has(candidate.id))
+      .map((candidate) => [candidate.id, `${candidate.name} (${elementTypeLabel(candidate.type)})`])
+  ];
+}
+
+function descendantIdsFor(parentId, elements = activeScreen()?.elements ?? []) {
+  const descendants = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const element of elements) {
+      if (element.id !== parentId && !descendants.has(element.id) && (element.parentId === parentId || descendants.has(element.parentId))) {
+        descendants.add(element.id);
+        changed = true;
+      }
+    }
+  }
+  return descendants;
+}
+
+function movementElementsFor(elements) {
+  const screenElements = activeScreen()?.elements ?? [];
+  const rootIds = new Set(elements.map((element) => element.id));
+  const directRoots = elements.filter((element) => !ancestorIdsFor(element.id, screenElements).some((id) => rootIds.has(id)));
+  const moveIds = new Set();
+  for (const element of directRoots) {
+    moveIds.add(element.id);
+    descendantIdsFor(element.id, screenElements).forEach((id) => moveIds.add(id));
+  }
+  return screenElements.filter((element) => moveIds.has(element.id));
+}
+
+function ancestorIdsFor(elementId, elements = activeScreen()?.elements ?? []) {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const ancestors = [];
+  const seen = new Set([elementId]);
+  let current = byId.get(elementId);
+  while (current?.parentId && byId.has(current.parentId) && !seen.has(current.parentId)) {
+    ancestors.push(current.parentId);
+    seen.add(current.parentId);
+    current = byId.get(current.parentId);
+  }
+  return ancestors;
+}
+
+function setSelectionParent(elements, parentId) {
+  const ids = new Set(elements.map((element) => element.id));
+  const next = elements.reduce((current, element) => {
+    if (element.id === parentId || descendantIdsFor(element.id).has(parentId)) return current;
+    return updateElement(current, editorState.selectedScreenId, element.id, { parentId });
+  }, project);
+  commit(next);
+  editorStore.selectElements([...ids]);
+  render();
+}
+
+function nestSelectionUnderFirst(elements) {
+  const [parent, ...children] = elements;
+  if (!parent || !children.length) return;
+  const selectedIds = elements.map((element) => element.id);
+  const next = children.reduce((current, element) => {
+    if (descendantIdsFor(element.id).has(parent.id)) return current;
+    return updateElement(current, editorState.selectedScreenId, element.id, { parentId: parent.id });
+  }, project);
+  commit(next);
+  editorStore.selectElements(selectedIds);
+  render();
 }
 
 function renderInspector() {
@@ -1035,6 +1140,7 @@ function renderInspector() {
   const element = selectedElements[0];
   inspector.append(
     inputField('Name', 'text', element.name, (value) => change({ name: value })),
+    selectField('Parent', parentOptionsFor(element), element.parentId ?? '', (value) => change({ parentId: value })),
     inputField('X', 'number', element.x, (value) => change({ x: Number(value) }), { disabled: element.locked }),
     inputField('Y', 'number', element.y, (value) => change({ y: Number(value) }), { disabled: element.locked }),
     inputField('W', 'number', element.w, (value) => change({ w: Number(value) }), { disabled: element.locked }),
@@ -1108,7 +1214,21 @@ function renderMultiSelectionInspector(inspector, elements) {
     <button data-action="duplicate">Duplicate</button>
     <button data-action="delete">Delete</button>
   `;
-  inspector.append(summary, actions);
+  const parentControls = document.createElement('div');
+  parentControls.className = 'mini-actions';
+  const makeChildrenButton = document.createElement('button');
+  makeChildrenButton.type = 'button';
+  makeChildrenButton.textContent = 'Nest under first';
+  makeChildrenButton.disabled = elements.length < 2;
+  makeChildrenButton.title = 'Make the other selected elements children of the first selected element.';
+  makeChildrenButton.addEventListener('click', () => nestSelectionUnderFirst(elements));
+  const detachButton = document.createElement('button');
+  detachButton.type = 'button';
+  detachButton.textContent = 'Detach';
+  detachButton.title = 'Remove parent from selected elements.';
+  detachButton.addEventListener('click', () => setSelectionParent(elements, ''));
+  parentControls.append(makeChildrenButton, detachButton);
+  inspector.append(summary, parentControls, actions);
 }
 
 function emptyNote(title, detail) {
@@ -1641,16 +1761,18 @@ function startMarqueeSelection(event) {
     originalSelectionIds: keepExistingSelection ? getSelectedIds() : [],
     guides: []
   };
-  query('#stage').setPointerCapture(event.pointerId);
+  query('#stage-wrap').setPointerCapture(event.pointerId);
   if (!keepExistingSelection) editorStore.clearElementSelection();
   render();
 }
 
 function startSelectionDrag(event, mode = 'move', focusId = null) {
   const selected = getSelectedElements();
-  const multiSelectionDrag = selected.length > 1 && (mode === 'move' || mode.startsWith('resize-')) && !focusId;
-  const dragElements = (multiSelectionDrag ? selected : selected.filter((element) => element.id === focusId))
-    .filter((element) => !element.locked);
+  const selectedIds = new Set(selected.map((element) => element.id));
+  const dragSelection = mode === 'move' && (!focusId || selectedIds.has(focusId));
+  const sourceElements = dragSelection ? selected : selected.filter((element) => element.id === focusId);
+  const editableSourceElements = sourceElements.filter((element) => !element.locked);
+  const dragElements = mode === 'move' ? movementElementsFor(editableSourceElements) : editableSourceElements;
   if (!dragElements.length) {
     render();
     return;
@@ -1661,12 +1783,12 @@ function startSelectionDrag(event, mode = 'move', focusId = null) {
     id: focusId ?? dragElements[0].id,
     ids: dragElements.map((element) => element.id),
     start: svgPoint(query('#stage'), event.clientX, event.clientY),
-    original: structuredClone(focusId ? dragElements.find((element) => element.id === focusId) ?? dragElements[0] : bounds),
+    original: structuredClone(mode === 'move' || !focusId ? bounds : dragElements.find((element) => element.id === focusId) ?? dragElements[0]),
     originals: dragElements.map((element) => structuredClone(element)),
     bounds,
     guides: []
   };
-  query('#stage').setPointerCapture(event.pointerId);
+  query('#stage-wrap').setPointerCapture(event.pointerId);
   render();
 }
 
@@ -1894,7 +2016,7 @@ function duplicateSelected() {
 }
 
 function centerSelected() {
-  const selected = getEditableSelectedElements();
+  const selected = movementElementsFor(getEditableSelectedElements());
   const bounds = elementBounds(selected);
   if (!bounds) return;
   const moveX = Math.round((project.device.width - bounds.w) / 2) - bounds.x;
@@ -1918,7 +2040,7 @@ function distributeSelected(axis) {
 }
 
 function nudge(key, amount) {
-  const selected = getEditableSelectedElements();
+  const selected = movementElementsFor(getEditableSelectedElements());
   if (!selected.length) return;
   commit(updateElementsFromOriginals(selected, (element) => ({
     x: element.x + (key === 'ArrowLeft' ? -amount : key === 'ArrowRight' ? amount : 0),

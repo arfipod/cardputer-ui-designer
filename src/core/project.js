@@ -133,14 +133,18 @@ export function updateElement(project, screenId, id, patch) {
 }
 
 export function removeElement(project, screenId, id) {
-  const next = updateScreenElements(project, screenId, (elements) => elements.filter((element) => element.id !== id));
+  const next = updateScreenElements(project, screenId, (elements) => elements
+    .filter((element) => element.id !== id)
+    .map((element) => element.parentId === id ? { ...element, parentId: '' } : element));
   return cleanupFlow({ ...next, flow: { ...next.flow, transitions: next.flow.transitions.filter((transition) => transition.elementId !== id) } });
 }
 
 export function removeElements(project, screenId, ids) {
   const idSet = new Set(ids);
   if (!idSet.size) return project;
-  const next = updateScreenElements(project, screenId, (elements) => elements.filter((element) => !idSet.has(element.id)));
+  const next = updateScreenElements(project, screenId, (elements) => elements
+    .filter((element) => !idSet.has(element.id))
+    .map((element) => idSet.has(element.parentId) ? { ...element, parentId: '' } : element));
   return cleanupFlow({ ...next, flow: { ...next.flow, transitions: next.flow.transitions.filter((transition) => !idSet.has(transition.elementId)) } });
 }
 
@@ -161,12 +165,14 @@ export function duplicateElements(project, screenId, ids) {
   const screen = getScreen(project, screenId);
   if (!screen.elements.some((element) => idSet.has(element.id) && !element.locked)) return project;
   return updateScreenElements(project, screenId, (elements) => {
+    const idMap = new Map(elements.filter((element) => idSet.has(element.id) && !element.locked).map((element) => [element.id, cryptoId(element.type)]));
     const clones = elements
       .filter((element) => idSet.has(element.id) && !element.locked)
       .map((source) => {
         const clone = structuredClone(source);
-        clone.id = cryptoId(source.type);
+        clone.id = idMap.get(source.id);
         clone.name = `${source.name} copy`;
+        clone.parentId = idMap.get(source.parentId) ?? source.parentId ?? '';
         clone.x += project.grid.size;
         clone.y += project.grid.size;
         return clampElementToDevice(clone, project.device);
@@ -288,7 +294,12 @@ export function duplicateScreen(project, screenId) {
   clone.id = cryptoId('screen');
   clone.name = `${source.name} copy`;
   clone.slug = makeUniqueScreenSlug(project.screens, clone.name);
-  clone.elements = clone.elements.map((element) => ({ ...structuredClone(element), id: cryptoId(element.type) }));
+  const idMap = new Map(clone.elements.map((element) => [element.id, cryptoId(element.type)]));
+  clone.elements = clone.elements.map((element) => ({
+    ...structuredClone(element),
+    id: idMap.get(element.id),
+    parentId: idMap.get(element.parentId) ?? ''
+  }));
   return touch({ ...project, screens: [...project.screens, clone] });
 }
 
@@ -454,6 +465,7 @@ function normalizeElement(element) {
     id: element.id || cryptoId(element.type || 'element'),
     type: element.type || 'rect',
     name: element.name || element.type || 'Element',
+    parentId: typeof element.parentId === 'string' ? element.parentId : '',
     visible: element.visible !== false,
     locked: Boolean(element.locked),
     events: normalizeEvents(element.events),

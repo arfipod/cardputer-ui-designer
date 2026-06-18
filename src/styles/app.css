@@ -464,7 +464,12 @@ input[type="color"] {
   min-width: 0;
   display: grid;
   gap: 0.18rem;
+  padding-left: calc(var(--layer-depth, 0) * 0.85rem);
   cursor: pointer;
+}
+
+.layer-row[data-depth]:not([data-depth="0"]) .layer-summary {
+  border-left: 1px solid #31405a;
 }
 
 .layer-summary:focus-visible {

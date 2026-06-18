@@ -384,11 +384,29 @@ test('normalizes missing layer fields for backward-compatible projects', () => {
   delete raw.screens[0].elements[0].locked;
   delete raw.screens[0].elements[0].visible;
   delete raw.screens[0].elements[0].name;
+  delete raw.screens[0].elements[0].parentId;
 
   const parsed = parseDesignProject(JSON.stringify(raw));
   assert.equal(parsed.screens[0].elements[0].locked, false);
   assert.equal(parsed.screens[0].elements[0].visible, true);
   assert.equal(parsed.screens[0].elements[0].name, parsed.screens[0].elements[0].type);
+  assert.equal(parsed.screens[0].elements[0].parentId, '');
+});
+
+test('preserves and cleans element hierarchy references', () => {
+  let project = createProject();
+  const screenId = project.flow.startScreenId;
+  const [parent, child, grandchild] = project.screens[0].elements;
+  project = updateElement(project, screenId, child.id, { parentId: parent.id });
+  project = updateElement(project, screenId, grandchild.id, { parentId: child.id });
+
+  const duplicated = duplicateElements(project, screenId, [parent.id, child.id, grandchild.id]);
+  const clones = duplicated.screens[0].elements.slice(-3);
+  assert.equal(clones[1].parentId, clones[0].id);
+  assert.equal(clones[2].parentId, clones[1].id);
+
+  const removedParent = removeElements(project, screenId, [parent.id]);
+  assert.equal(removedParent.screens[0].elements.find((element) => element.id === child.id).parentId, '');
 });
 
 test('migrates version 2 documents without losing elements', () => {
