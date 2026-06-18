@@ -17,8 +17,11 @@ import { cardputerBitmapGlyph, cardputerBitmapScale, cardputerBitmapTextWidth } 
 import { m5gfxTextSize, m5gfxTextWidth } from '../src/core/m5gfxText.js';
 import { parseDesignProject, serializeProject } from '../src/core/storage.js';
 import { exportFirmwareProject } from '../src/exporters/firmware.js';
+import { exportJson } from '../src/exporters/project.js';
 import { exportXmlProject } from '../src/exporters/xml.js';
 import { CAPTURE_MODE, createActionRegistry } from '../src/app/actions/actionRegistry.js';
+import { createEditorStore } from '../src/app/state/editorStore.js';
+import { createProjectStore } from '../src/app/state/projectStore.js';
 
 test('creates a Cardputer project with a start screen', () => {
   const project = createProject();
@@ -47,6 +50,40 @@ test('registers and runs dependency-free editor actions', async () => {
   assert.equal(await registry.run('demo-action', { enabled: true, payload: { value: 2 } }), true);
   assert.deepEqual(calls, [2]);
   assert.equal(registry.get('demo-action').shortcut, 'mod+d');
+});
+
+test('keeps project and editor state stores separate', () => {
+  const project = createProject();
+  const projectStore = createProjectStore({
+    ...project,
+    selectedElementId: 'local-selection',
+    zoom: 4,
+    hoveredElementId: 'local-hover'
+  });
+  const editorStore = createEditorStore({
+    selectedScreenId: project.flow.startScreenId,
+    selectedElementId: project.screens[0].elements[0].id,
+    hoveredElementId: 'hovered',
+    activeTool: 'button',
+    zoom: 2
+  });
+
+  let current = projectStore.getProject();
+  current = addScreen(current, 'Settings');
+  projectStore.commit(current);
+  assert.equal(projectStore.canUndo(), true);
+  assert.equal(projectStore.undo().screens.length, 1);
+  assert.equal(editorStore.getState().selectedElementId, project.screens[0].elements[0].id);
+
+  const persisted = JSON.parse(serializeProject(projectStore.getPersistentProject()));
+  assert.equal(persisted.selectedElementId, undefined);
+  assert.equal(persisted.hoveredElementId, undefined);
+  assert.equal(persisted.zoom, undefined);
+  assert.equal(persisted.flow.startScreenId, project.flow.startScreenId);
+
+  const exported = JSON.parse(exportJson(projectStore.getPersistentProject()).content);
+  assert.equal(exported.activeTool, undefined);
+  assert.equal(exported.selectedScreenId, undefined);
 });
 
 test('migrates version 2 documents without losing elements', () => {

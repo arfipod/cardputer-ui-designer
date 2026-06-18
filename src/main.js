@@ -31,6 +31,9 @@ import { importXmlProject } from './exporters/xml.js';
 import { createActionRegistry } from './app/actions/actionRegistry.js';
 import { registerEditorActions } from './app/actions/editorActions.js';
 import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
+import { createEditorStore } from './app/state/editorStore.js';
+import { createProjectStore, firstElementId } from './app/state/projectStore.js';
+import { activeScreen as selectActiveScreen, selectedElement as selectSelectedElement, selectedScreenExists } from './app/state/selectors.js';
 
 const ELEMENTS = [
   ['text', 'Text'],
@@ -46,18 +49,11 @@ const ELEMENTS = [
   ['image', 'Image']
 ];
 
-let project = createProject();
-let selectedScreenId = project.flow.startScreenId;
-let selectedId = null;
-let selectedTransitionId = null;
-let selectedAssetId = null;
-let dragState = null;
-let zoom = 3;
-let history = [];
-let future = [];
+const projectStore = createProjectStore();
+const editorStore = createEditorStore({ selectedScreenId: projectStore.getProject().flow.startScreenId });
+const editorState = editorStore.getState();
+let project = projectStore.getProject();
 let lastBundle = null;
-let lastStageViewportSize = '';
-let shouldCenterStage = true;
 let lastPreviewAnimationMs = 0;
 const loadedFonts = new Set();
 const actions = createActionRegistry();
@@ -69,10 +65,8 @@ registerEditorActions(actions, createEditorCommands());
 boot();
 
 async function boot() {
-  project = await loadProject();
-  selectedScreenId = project.flow.startScreenId;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
-  history = [JSON.stringify(project)];
+  project = projectStore.replaceProject(await loadProject());
+  editorStore.selectScreen(project.flow.startScreenId, firstElementId(project, project.flow.startScreenId));
   await registerProjectFonts(project);
   mount();
   bindEvents();
@@ -215,7 +209,9 @@ function bindEvents() {
     const action = target.closest?.('[data-action]')?.dataset.action;
 
     if (tool) {
+      editorStore.setActiveTool(tool);
       await actions.run('element-add', createActionContext({ type: tool }));
+      editorStore.setActiveTool(null);
     }
 
     if (action) await actions.run(action, createActionContext());
@@ -227,7 +223,7 @@ function bindEvents() {
   });
 
   query('#screen-name').addEventListener('change', (event) => {
-    commit(updateScreen(project, selectedScreenId, { name: event.target.value }));
+    commit(updateScreen(project, editorState.selectedScreenId, { name: event.target.value }));
     render();
   });
 
@@ -273,7 +269,7 @@ function bindEvents() {
     });
     font.variants = buildFontVariants(font, sizes.length ? sizes : [12], query('#font-range').value, query('#font-symbols').value);
     commit(addFont(project, font));
-    selectedAssetId = font.id;
+    editorState.selectedAssetId = font.id;
     await registerProjectFonts(project);
     render();
     event.target.value = '';
@@ -284,6 +280,7 @@ function bindEvents() {
   stage.addEventListener('pointermove', onPointerMove);
   stage.addEventListener('pointerup', finishDrag);
   stage.addEventListener('pointercancel', finishDrag);
+  stage.addEventListener('pointerout', () => editorStore.setHoveredElement(null));
   stage.addEventListener('contextmenu', onStageContextMenu);
   document.addEventListener('click', hideContextMenu);
   document.addEventListener('contextmenu', (event) => {
@@ -312,10 +309,10 @@ function createEditorCommands() {
     downloadOutput: () => lastBundle && downloadText(lastBundle),
     duplicateScreen: duplicateActiveScreen,
     duplicateSelected,
-    exportFirmware: async () => showBundle(await exportFirmware(project)),
-    exportJson: () => showBundle(exportJson(project)),
+    exportFirmware: async () => showBundle(await exportFirmware(projectStore.getPersistentProject())),
+    exportJson: () => showBundle(exportJson(projectStore.getPersistentProject())),
     exportPng,
-    exportXml: () => showBundle(exportXml(project)),
+    exportXml: () => showBundle(exportXml(projectStore.getPersistentProject())),
     importProject,
     moveSelectedLayer,
     nudge,
@@ -336,20 +333,20 @@ function createActionContext(payload) {
   return {
     payload,
     canDeleteScreen: () => project.screens.length > 1,
-    canRedo: () => future.length > 0,
-    canUndo: () => history.length > 1,
+    canRedo: () => projectStore.canRedo(),
+    canUndo: () => projectStore.canUndo(),
     hasBundle: () => Boolean(lastBundle),
-    hasSelectedAsset: () => Boolean(selectedAssetId),
-    hasSelection: () => Boolean(selectedId),
-    hasTransition: () => Boolean(selectedTransitionId)
+    hasSelectedAsset: () => Boolean(editorState.selectedAssetId),
+    hasSelection: () => Boolean(editorState.selectedElementId),
+    hasTransition: () => Boolean(editorState.selectedTransitionId)
   };
 }
 
 function render() {
-  void saveProject(project);
+  void saveProject(projectStore.getPersistentProject());
   query('#project-name').value = project.meta.name;
   query('#screen-name').value = activeScreen().name;
-  query('#zoom').value = String(zoom);
+  query('#zoom').value = String(editorState.zoom);
   query('#grid-enabled').checked = project.grid.enabled;
   query('#snap-enabled').checked = project.grid.snap;
   query('#grid-size').value = String(project.grid.size);
@@ -368,13 +365,13 @@ function renderScreens() {
   clear(screens);
   project.screens.forEach((screen) => {
     const row = document.createElement('button');
-    row.className = `stack-row ${screen.id === selectedScreenId ? 'active' : ''}`;
+    row.className = `stack-row ${screen.id === editorState.selectedScreenId ? 'active' : ''}`;
     row.innerHTML = `<strong>${escapeHtml(screen.name)}</strong><em>${screen.slug}${project.flow.startScreenId === screen.id ? ' / start' : ''}</em>`;
     row.addEventListener('click', () => {
-      selectedScreenId = screen.id;
-      selectedId = screen.elements.at(-1)?.id ?? null;
-      selectedTransitionId = null;
-      shouldCenterStage = true;
+      editorState.selectedScreenId = screen.id;
+      editorState.selectedElementId = screen.elements.at(-1)?.id ?? null;
+      editorState.selectedTransitionId = null;
+      editorState.shouldCenterStage = true;
       render();
     });
     screens.append(row);
@@ -393,12 +390,12 @@ function renderFlow() {
     const to = getScreen(project, transition.toScreenId);
     const element = getElement(project, transition.fromScreenId, transition.elementId);
     const row = document.createElement('button');
-    row.className = `stack-row ${transition.id === selectedTransitionId ? 'active' : ''}`;
+    row.className = `stack-row ${transition.id === editorState.selectedTransitionId ? 'active' : ''}`;
     row.innerHTML = `<strong>${escapeHtml(from?.name ?? '?')} -> ${escapeHtml(to?.name ?? '?')}</strong><em>${escapeHtml(element?.name ?? transition.elementId)} / ${transition.trigger}</em>`;
     row.addEventListener('click', () => {
-      selectedTransitionId = transition.id;
-      selectedScreenId = transition.fromScreenId;
-      selectedId = transition.elementId;
+      editorState.selectedTransitionId = transition.id;
+      editorState.selectedScreenId = transition.fromScreenId;
+      editorState.selectedElementId = transition.elementId;
       render();
     });
     flow.append(row);
@@ -407,12 +404,12 @@ function renderFlow() {
 
 function renderStage() {
   const stage = query('#stage');
-  const stageViewportSize = `${project.device.width}x${project.device.height}@${zoom}`;
-  const viewportChanged = stageViewportSize !== lastStageViewportSize;
-  lastStageViewportSize = stageViewportSize;
+  const stageViewportSize = `${project.device.width}x${project.device.height}@${editorState.zoom}`;
+  const viewportChanged = stageViewportSize !== editorState.lastStageViewportSize;
+  editorState.lastStageViewportSize = stageViewportSize;
   stage.setAttribute('viewBox', `0 0 ${project.device.width} ${project.device.height}`);
-  stage.style.width = `${project.device.width * zoom}px`;
-  stage.style.height = `${project.device.height * zoom}px`;
+  stage.style.width = `${project.device.width * editorState.zoom}px`;
+  stage.style.height = `${project.device.height * editorState.zoom}px`;
   clear(stage);
   stage.append(svg('rect', { x: 0, y: 0, width: project.device.width, height: project.device.height, fill: '#05070b' }));
   if (project.grid.enabled) drawGrid(stage);
@@ -421,8 +418,8 @@ function renderStage() {
   }
   const selected = getSelected();
   if (selected) stage.append(renderSelection(selected));
-  if (shouldCenterStage || viewportChanged) {
-    shouldCenterStage = false;
+  if (editorState.shouldCenterStage || viewportChanged) {
+    editorState.shouldCenterStage = false;
     requestAnimationFrame(centerStageInViewport);
   }
 }
@@ -571,10 +568,10 @@ function renderLayers() {
   clear(layers);
   [...activeScreen().elements].reverse().forEach((element) => {
     const row = document.createElement('button');
-    row.className = `layer ${element.id === selectedId ? 'active' : ''}`;
+    row.className = `layer ${element.id === editorState.selectedElementId ? 'active' : ''}`;
     row.innerHTML = `<span>${element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
     row.addEventListener('click', () => {
-      selectedId = element.id;
+      editorState.selectedElementId = element.id;
       render();
     });
     layers.append(row);
@@ -622,18 +619,18 @@ function renderInspector() {
   eventsTitle.textContent = 'Events';
   inspector.append(eventsTitle);
   EVENT_TRIGGERS.forEach((trigger) => {
-    const existing = project.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
-    inspector.append(selectField(trigger, [['', 'None'], ...project.screens.filter((screen) => screen.id !== selectedScreenId).map((screen) => [screen.id, screen.name])], existing?.toScreenId ?? '', (value) => setElementEvent(element, trigger, value)));
+    const existing = project.flow.transitions.find((transition) => transition.fromScreenId === editorState.selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
+    inspector.append(selectField(trigger, [['', 'None'], ...project.screens.filter((screen) => screen.id !== editorState.selectedScreenId).map((screen) => [screen.id, screen.name])], existing?.toScreenId ?? '', (value) => setElementEvent(element, trigger, value)));
   });
 
   function change(patch) {
-    commit(updateElement(project, selectedScreenId, element.id, patch));
-    selectedId = element.id;
+    commit(updateElement(project, editorState.selectedScreenId, element.id, patch));
+    editorState.selectedElementId = element.id;
     render();
   }
   function changeProp(key, value) {
-    commit(updateElement(project, selectedScreenId, element.id, { props: { [key]: value } }));
-    selectedId = element.id;
+    commit(updateElement(project, editorState.selectedScreenId, element.id, { props: { [key]: value } }));
+    editorState.selectedElementId = element.id;
     render();
   }
 }
@@ -647,17 +644,17 @@ function renderFonts() {
   }
   project.assets.fonts.forEach((font) => {
     const row = document.createElement('div');
-    row.className = `asset-row ${font.id === selectedAssetId ? 'active' : ''}`;
+    row.className = `asset-row ${font.id === editorState.selectedAssetId ? 'active' : ''}`;
     row.innerHTML = `
       <button data-font-id="${font.id}"><strong>${escapeHtml(font.name)}</strong><em>${font.variants.map((variant) => `${variant.size}px`).join(', ')}</em></button>
       <button data-action="asset-delete">Delete</button>
     `;
     row.querySelector('[data-font-id]').addEventListener('click', () => {
-      selectedAssetId = font.id;
+      editorState.selectedAssetId = font.id;
       render();
     });
     row.querySelector('[data-action="asset-delete"]').addEventListener('click', () => {
-      selectedAssetId = font.id;
+      editorState.selectedAssetId = font.id;
     });
     const firstVariant = font.variants[0];
     row.append(
@@ -682,19 +679,19 @@ function renderFonts() {
 
 function setElementEvent(element, trigger, toScreenId) {
   let next = project;
-  const existing = next.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
+  const existing = next.flow.transitions.find((transition) => transition.fromScreenId === editorState.selectedScreenId && transition.elementId === element.id && transition.trigger === trigger);
   if (existing) next = removeTransition(next, existing.id);
   const toScreen = getScreen(next, toScreenId);
-  next = updateElement(next, selectedScreenId, element.id, { events: { [trigger]: toScreen ? toScreen.slug : '' } });
-  if (toScreenId) next = addTransition(next, { fromScreenId: selectedScreenId, elementId: element.id, trigger, toScreenId });
+  next = updateElement(next, editorState.selectedScreenId, element.id, { events: { [trigger]: toScreen ? toScreen.slug : '' } });
+  if (toScreenId) next = addTransition(next, { fromScreenId: editorState.selectedScreenId, elementId: element.id, trigger, toScreenId });
   commit(cleanupFlow(next));
-  selectedId = element.id;
+  editorState.selectedElementId = element.id;
   render();
 }
 
 function addNewElement(type) {
-  commit(addElement(project, selectedScreenId, type));
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  commit(addElement(project, editorState.selectedScreenId, type));
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
@@ -704,14 +701,14 @@ async function importProject(file) {
     ? importXmlProject(raw)
     : parseDesignProject(raw);
   commit(imported);
-  selectedScreenId = imported.flow.startScreenId;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  editorState.selectedScreenId = imported.flow.startScreenId;
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   await registerProjectFonts(project);
   render();
 }
 
 function setZoom(value) {
-  zoom = value;
+  editorStore.setZoom(value);
   renderStage();
 }
 
@@ -738,61 +735,61 @@ function setDevicePreset(deviceId) {
 function resetProject() {
   if (!confirm('Create a new project?')) return;
   commit(createProject());
-  selectedScreenId = project.flow.startScreenId;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  editorState.selectedScreenId = project.flow.startScreenId;
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
 function addNewScreen() {
   commit(addScreen(project));
-  selectedScreenId = project.screens.at(-1).id;
-  selectedId = null;
-  shouldCenterStage = true;
+  editorState.selectedScreenId = project.screens.at(-1).id;
+  editorState.selectedElementId = null;
+  editorState.shouldCenterStage = true;
   render();
 }
 
 function duplicateActiveScreen() {
-  commit(duplicateScreen(project, selectedScreenId));
-  selectedScreenId = project.screens.at(-1).id;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
-  shouldCenterStage = true;
+  commit(duplicateScreen(project, editorState.selectedScreenId));
+  editorState.selectedScreenId = project.screens.at(-1).id;
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorState.shouldCenterStage = true;
   render();
 }
 
 function deleteActiveScreen() {
   if (project.screens.length <= 1) return;
-  commit(removeScreen(project, selectedScreenId));
-  selectedScreenId = project.screens[0].id;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  commit(removeScreen(project, editorState.selectedScreenId));
+  editorState.selectedScreenId = project.screens[0].id;
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
 function setStartScreen() {
-  commit({ ...project, flow: { ...project.flow, startScreenId: selectedScreenId } });
+  commit({ ...project, flow: { ...project.flow, startScreenId: editorState.selectedScreenId } });
   render();
 }
 
 function addTransitionFromSelected() {
   const element = getSelected();
-  const target = project.screens.find((screen) => screen.id !== selectedScreenId);
+  const target = project.screens.find((screen) => screen.id !== editorState.selectedScreenId);
   if (!element || !target) return;
-  const existing = project.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === 'press');
+  const existing = project.flow.transitions.find((transition) => transition.fromScreenId === editorState.selectedScreenId && transition.elementId === element.id && transition.trigger === 'press');
   if (existing) return;
-  commit(addTransition(updateElement(project, selectedScreenId, element.id, { events: { press: target.slug } }), { fromScreenId: selectedScreenId, elementId: element.id, trigger: 'press', toScreenId: target.id }));
+  commit(addTransition(updateElement(project, editorState.selectedScreenId, element.id, { events: { press: target.slug } }), { fromScreenId: editorState.selectedScreenId, elementId: element.id, trigger: 'press', toScreenId: target.id }));
   render();
 }
 
 function deleteSelectedTransition() {
-  if (!selectedTransitionId) return;
-  commit(removeTransition(project, selectedTransitionId));
-  selectedTransitionId = null;
+  if (!editorState.selectedTransitionId) return;
+  commit(removeTransition(project, editorState.selectedTransitionId));
+  editorState.selectedTransitionId = null;
   render();
 }
 
 function deleteSelectedAsset() {
-  if (!selectedAssetId) return;
-  commit(removeFont(project, selectedAssetId));
-  selectedAssetId = project.assets.fonts[0]?.id ?? null;
+  if (!editorState.selectedAssetId) return;
+  commit(removeFont(project, editorState.selectedAssetId));
+  editorState.selectedAssetId = project.assets.fonts[0]?.id ?? null;
   render();
 }
 
@@ -873,7 +870,7 @@ function onStageContextMenu(event) {
   event.stopPropagation();
   const element = activeScreen().elements.find((item) => item.id === id);
   if (!element) return;
-  selectedId = id;
+  editorState.selectedElementId = id;
   render();
   showContextMenu(event.clientX, event.clientY, element);
 }
@@ -916,87 +913,102 @@ function onPointerDown(event) {
   const elementNode = target.closest?.('[data-id]');
   const id = handle?.dataset.id ?? elementNode?.dataset.id;
   if (!id) {
-    selectedId = null;
+    editorState.selectedElementId = null;
     render();
     return;
   }
   const element = activeScreen().elements.find((item) => item.id === id);
   if (!element || element.locked) return;
-  selectedId = id;
-  dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element) };
+  editorState.selectedElementId = id;
+  editorState.dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element) };
   query('#stage').setPointerCapture(event.pointerId);
   render();
 }
 
 function onPointerMove(event) {
-  if (!dragState) return;
+  if (!editorState.dragState) {
+    const id = event.target.closest?.('[data-id]')?.dataset.id ?? null;
+    if (id !== editorState.hoveredElementId) editorStore.setHoveredElement(id);
+    return;
+  }
   const point = svgPoint(query('#stage'), event.clientX, event.clientY);
-  const dx = point.x - dragState.start.x;
-  const dy = point.y - dragState.start.y;
-  const o = dragState.original;
+  const dx = point.x - editorState.dragState.start.x;
+  const dy = point.y - editorState.dragState.start.y;
+  const o = editorState.dragState.original;
   const patch = {};
-  if (dragState.mode === 'move') {
+  if (editorState.dragState.mode === 'move') {
     patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
     patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
   } else {
     const right = o.x + o.w;
     const bottom = o.y + o.h;
-    if (dragState.mode.includes('w')) {
+    if (editorState.dragState.mode.includes('w')) {
       patch.x = snap(o.x + dx, project.grid.size, project.grid.snap);
       patch.w = right - patch.x;
     }
-    if (dragState.mode.includes('n')) {
+    if (editorState.dragState.mode.includes('n')) {
       patch.y = snap(o.y + dy, project.grid.size, project.grid.snap);
       patch.h = bottom - patch.y;
     }
-    if (dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
-    if (dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
+    if (editorState.dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
+    if (editorState.dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
   }
-  project = updateElement(project, selectedScreenId, dragState.id, patch);
+  project = projectStore.setProject(updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch), { recordHistory: false });
   renderStage();
   renderInspector();
 }
 
 function finishDrag() {
-  if (!dragState) return;
-  dragState = null;
-  pushHistory();
+  if (!editorState.dragState) return;
+  editorStore.setDragState(null);
+  commit(project);
   render();
 }
 
 function getSelected() {
-  return activeScreen().elements.find((element) => element.id === selectedId);
+  return selectSelectedElement(project, editorState);
 }
 
 function activeScreen() {
-  return getScreen(project, selectedScreenId);
+  return selectActiveScreen(project, editorState);
+}
+
+function reconcileEditorSelection({ resetElement = false } = {}) {
+  if (!selectedScreenExists(project, editorState)) {
+    editorStore.selectScreen(project.flow.startScreenId, firstElementId(project, project.flow.startScreenId));
+    return;
+  }
+
+  if (resetElement || !getSelected()) {
+    editorStore.selectElement(firstElementId(project, editorState.selectedScreenId));
+  }
 }
 
 function deleteSelected() {
-  if (!selectedId) return;
-  commit(removeElement(project, selectedScreenId, selectedId));
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  if (!editorState.selectedElementId) return;
+  commit(removeElement(project, editorState.selectedScreenId, editorState.selectedElementId));
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
   render();
 }
 
 function duplicateSelected() {
-  if (!selectedId) return;
-  commit(duplicateElement(project, selectedScreenId, selectedId));
-  selectedId = activeScreen().elements.at(-1)?.id ?? selectedId;
+  if (!editorState.selectedElementId) return;
+  commit(duplicateElement(project, editorState.selectedScreenId, editorState.selectedElementId));
+  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? editorState.selectedElementId;
   render();
 }
 
 function centerSelected() {
   const element = getSelected();
   if (!element) return;
-  commit(updateElement(project, selectedScreenId, element.id, { x: Math.round((project.device.width - element.w) / 2), y: Math.round((project.device.height - element.h) / 2) }));
+  commit(updateElement(project, editorState.selectedScreenId, element.id, { x: Math.round((project.device.width - element.w) / 2), y: Math.round((project.device.height - element.h) / 2) }));
   render();
 }
 
 function nudge(key, amount) {
   const element = getSelected();
   if (!element || element.locked) return;
-  commit(updateElement(project, selectedScreenId, element.id, {
+  commit(updateElement(project, editorState.selectedScreenId, element.id, {
     x: element.x + (key === 'ArrowLeft' ? -amount : key === 'ArrowRight' ? amount : 0),
     y: element.y + (key === 'ArrowUp' ? -amount : key === 'ArrowDown' ? amount : 0)
   }));
@@ -1004,41 +1016,27 @@ function nudge(key, amount) {
 }
 
 function moveSelectedLayer(direction) {
-  if (!selectedId) return;
-  commit(moveLayer(project, selectedScreenId, selectedId, direction));
+  if (!editorState.selectedElementId) return;
+  commit(moveLayer(project, editorState.selectedScreenId, editorState.selectedElementId, direction));
   render();
 }
 
 function commit(next) {
-  project = next;
-  if (!getScreen(project, selectedScreenId)) selectedScreenId = project.screens[0].id;
-  pushHistory();
-}
-
-function pushHistory() {
-  const raw = JSON.stringify(project);
-  if (history.at(-1) !== raw) history.push(raw);
-  if (history.length > 80) history = history.slice(-80);
-  future = [];
+  project = projectStore.commit(next);
+  reconcileEditorSelection();
 }
 
 function undo() {
-  if (history.length <= 1) return;
-  const current = history.pop();
-  if (current) future.push(current);
-  project = JSON.parse(history.at(-1) ?? JSON.stringify(createProject()));
-  selectedScreenId = project.screens.some((screen) => screen.id === selectedScreenId) ? selectedScreenId : project.flow.startScreenId;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  if (!projectStore.canUndo()) return;
+  project = projectStore.undo();
+  reconcileEditorSelection({ resetElement: true });
   render();
 }
 
 function redo() {
-  const next = future.pop();
-  if (!next) return;
-  history.push(next);
-  project = JSON.parse(next);
-  selectedScreenId = project.screens.some((screen) => screen.id === selectedScreenId) ? selectedScreenId : project.flow.startScreenId;
-  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  if (!projectStore.canRedo()) return;
+  project = projectStore.redo();
+  reconcileEditorSelection({ resetElement: true });
   render();
 }
 
