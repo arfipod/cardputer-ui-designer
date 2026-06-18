@@ -1,0 +1,10 @@
+dist/
+node_modules/
+coverage/
+cardputer-ui-designer.zip
+firmware/**/.pio/
+firmware/**/build/
+firmware/**/.cache/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.*
+firmware/**/generated-project.cardputer-ui.json
