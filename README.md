@@ -22,7 +22,8 @@ The app is calibrated for the official Cardputer-Adv display size, 240 x 135 px 
 - Export/import LVGL-style XML text bundles with `cu:` metadata for round-trip data.
 - Export PNG from the SVG canvas.
 - Export generated M5GFX/M5Cardputer multi-file firmware bundle.
-- PlatformIO/ESP-IDF hardware smoke-test harness for Cardputer Adv.
+- Build and upload the currently open UI to Cardputer Adv from the local designer.
+- PlatformIO/ESP-IDF generated-UI runtime for Cardputer Adv.
 - GitHub Pages workflow included.
 
 ## Requirements
@@ -71,9 +72,17 @@ npm test
 
 The tests use the built-in Node test runner and cover project creation, migration, flow, storage and code generation.
 
-## Cardputer Adv Hardware Test
+## Cardputer Adv Hardware Upload
 
-This repo includes a PlatformIO/ESP-IDF smoke-test firmware in `firmware/cardputer_adv_ui_test`. It is based on the same `esp32-s3-devkitc-1` + ESP-IDF setup used by the `pocket_synth` Cardputer Adv example project.
+This repo includes a PlatformIO/ESP-IDF firmware project in `firmware/cardputer_adv_ui_test`. The local dev server can compile and upload the UI currently open in the designer, and the CLI can do the same from a project JSON file.
+
+From the web app, run the local server:
+
+```bash
+npm run dev
+```
+
+Then use `Build Board` or `Upload Board` in the top toolbar. These buttons call the local `/api/firmware` endpoint, generate the same firmware sources as the preview/export path, run PlatformIO, and auto-detect the Cardputer Adv USB serial port.
 
 List serial ports:
 
@@ -91,6 +100,12 @@ Upload the default generated UI firmware to the connected Cardputer Adv:
 
 ```bash
 npm run firmware:upload
+```
+
+Compile and upload in one CLI command:
+
+```bash
+npm run firmware:flash -- path/to/project.cardputer-ui.json
 ```
 
 Build or upload a UI exported from the designer:
@@ -113,7 +128,7 @@ Open the serial monitor:
 npm run firmware:monitor
 ```
 
-The uploader auto-detects ESP32-S3 USB Serial/JTAG devices with `VID:PID=303A:1001`. The smoke firmware logs `cardputer_ui_smoke: UI alive on screen=0` when it has booted.
+The uploader auto-detects ESP32-S3 USB Serial/JTAG devices with `VID:PID=303A:1001`. The runtime logs `cardputer_ui_runtime: UI alive screen=0` when it has booted.
 
 ## Repository Structure
 
@@ -167,7 +182,7 @@ The XML export is intended for interoperability with LVGL-style tooling. It writ
 
 ## Firmware Export Notes
 
-The M5GFX export is now a multi-file firmware bundle. It emits:
+The firmware export is a multi-file vanilla ESP-IDF bundle. It emits:
 
 - `cardputer_ui.h/.cpp`
 - `cardputer_ui_assets.h/.cpp`
@@ -178,19 +193,13 @@ The M5GFX export is now a multi-file firmware bundle. It emits:
 The generated API is:
 
 ```cpp
-void cardputer_ui_init(lgfx::LGFX_Device* display);
+void cardputer_ui_init(CardputerDisplay* display);
 void cardputer_ui_draw(CardputerScreenId screen);
 CardputerScreenId cardputer_ui_handle_event(CardputerScreenId current, CardputerUiEvent event);
 CardputerScreenId cardputer_ui_handle_element_event(CardputerScreenId current, const char* elementId, CardputerUiEvent event);
 ```
 
-Recommended next firmware step:
-
-1. Export the generated M5GFX bundle.
-2. Split the sections into the matching files in your ESP-IDF or PlatformIO project.
-3. Call `cardputer_ui_init(&display)` after display setup.
-4. Track the current `CardputerScreenId` in your app loop.
-5. Map keyboard/buttons to `CardputerUiEvent` and redraw after transitions.
+The bundled PlatformIO runtime calls `cardputer_ui_init(&display)`, draws `CARDPUTER_UI_START_SCREEN`, and runs separate FreeRTOS tasks for keyboard input and display/screen transitions.
 
 Uploaded TTF fonts are previewed in the browser and exported as bitmap subsets. By default, variants use the `0x20-0x7F` glyph range plus any extra symbols configured in the font panel.
 

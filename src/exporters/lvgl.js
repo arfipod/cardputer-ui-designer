@@ -43,14 +43,18 @@ function renderElement(element, index) {
   }
 
   if (element.type === 'progress') {
-    return [
+    const lines = [
       `  lv_obj_t* ${id} = lv_bar_create(parent);`,
       `  lv_obj_set_pos(${id}, ${Math.round(element.x)}, ${Math.round(element.y)});`,
       `  lv_obj_set_size(${id}, ${Math.round(element.w)}, ${Math.round(element.h)});`,
       `  lv_bar_set_range(${id}, ${Math.round(p.min ?? 0)}, ${Math.round(p.max ?? 100)});`,
       `  lv_bar_set_value(${id}, ${Math.round(p.value ?? 0)}, LV_ANIM_OFF);`,
-      ''
     ];
+    if (p.orientation === 'vertical') {
+      lines.push(`  lv_obj_set_style_transform_angle(${id}, 900, 0);`);
+    }
+    lines.push('');
+    return lines;
   }
 
   if (element.type === 'gauge') {

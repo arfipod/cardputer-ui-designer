@@ -63,9 +63,11 @@ function exportHeader(project) {
 }
 
 function exportSource(project) {
+  const usesAnimatedSparkline = project.screens.some((screen) => screen.elements.some((element) => element.type === 'sparkline' && element.props?.mode === 'wave'));
   const lines = [
     '#include "cardputer_ui.h"',
     '#include "cardputer_ui_fonts.h"',
+    ...(usesAnimatedSparkline ? ['#include "esp_timer.h"', '#include <math.h>'] : []),
     '#include <string.h>',
     '',
     'static CardputerDisplay* ui_display = nullptr;',
@@ -171,9 +173,14 @@ function renderElement(project, element) {
 
   if (element.type === 'progress') {
     const ratio = valueRatio(p.value, p.min, p.max);
-    const filled = Math.max(0, Math.round((element.w - 4) * ratio));
+    const vertical = p.orientation === 'vertical';
+    const filled = Math.max(0, Math.round(((vertical ? element.h : element.w) - 4) * ratio));
     out.push(`  display.drawRoundRect(${n(element.x)}, ${n(element.y)}, ${n(element.w)}, ${n(element.h)}, ${radius}, ${stroke});`);
-    out.push(`  display.fillRoundRect(${n(element.x + 2)}, ${n(element.y + 2)}, ${filled}, ${n(element.h - 4)}, ${Math.max(0, radius - 2)}, ${fill});`);
+    if (vertical) {
+      out.push(`  display.fillRoundRect(${n(element.x + 2)}, ${n(element.y + element.h - 2 - filled)}, ${n(element.w - 4)}, ${filled}, ${Math.max(0, radius - 2)}, ${fill});`);
+    } else {
+      out.push(`  display.fillRoundRect(${n(element.x + 2)}, ${n(element.y + 2)}, ${filled}, ${n(element.h - 4)}, ${Math.max(0, radius - 2)}, ${fill});`);
+    }
   }
 
   if (element.type === 'gauge') {
@@ -199,13 +206,31 @@ function renderElement(project, element) {
   }
 
   if (element.type === 'sparkline') {
-    const points = p.points ?? [];
-    for (let index = 0; index < points.length - 3; index += 2) {
-      const x1 = element.x + (points[index] / 100) * element.w;
-      const y1 = element.y + element.h - (points[index + 1] / 100) * element.h;
-      const x2 = element.x + (points[index + 2] / 100) * element.w;
-      const y2 = element.y + element.h - (points[index + 3] / 100) * element.h;
-      out.push(`  display.drawLine(${n(x1)}, ${n(y1)}, ${n(x2)}, ${n(y2)}, ${stroke});`);
+    out.push(...renderSparklineElement(element, p, stroke, fill));
+    if (p.mode === 'wave') {
+      const id = safeIdentifier(element.id);
+      out.push(`  const int spark_samples_${id} = ${Math.max(16, Math.min(64, Math.round(element.w / 4)))};`);
+      out.push(`  const float spark_t_${id} = esp_timer_get_time() / 1000000.0f;`);
+      out.push(`  int spark_prev_x_${id} = ${n(element.x)};`);
+      out.push(`  int spark_prev_y_${id} = ${n(element.y + element.h / 2)};`);
+      out.push(`  for (int i = 0; i < spark_samples_${id}; ++i) {`);
+      out.push(`    const float x_ratio = spark_samples_${id} <= 1 ? 0.0f : (float)i / (float)(spark_samples_${id} - 1);`);
+      out.push(`    const float sample = fminf(100.0f, fmaxf(0.0f, 50.0f + sinf(spark_t_${id} * 7.0f + x_ratio * 24.0f) * (22.0f + 18.0f * sinf(spark_t_${id} * 2.1f)) + sinf(spark_t_${id} * 18.0f + x_ratio * 53.0f) * 16.0f));`);
+      out.push(`    const int x = ${n(element.x)} + (int)(x_ratio * ${n(element.w - 1)});`);
+      out.push(`    const int y = ${n(element.y + element.h - 1)} - (int)((sample / 100.0f) * ${n(element.h - 1)});`);
+      out.push(`    if (i > 0) display.drawLine(spark_prev_x_${id}, spark_prev_y_${id}, x, y, ${stroke});`);
+      out.push(`    spark_prev_x_${id} = x;`);
+      out.push(`    spark_prev_y_${id} = y;`);
+      out.push('  }');
+    } else {
+      const points = p.points ?? [];
+      for (let index = 0; index < points.length - 3; index += 2) {
+        const x1 = element.x + (points[index] / 100) * element.w;
+        const y1 = element.y + element.h - (points[index + 1] / 100) * element.h;
+        const x2 = element.x + (points[index + 2] / 100) * element.w;
+        const y2 = element.y + element.h - (points[index + 3] / 100) * element.h;
+        out.push(`  display.drawLine(${n(x1)}, ${n(y1)}, ${n(x2)}, ${n(y2)}, ${stroke});`);
+      }
     }
   }
 
@@ -215,6 +240,18 @@ function renderElement(project, element) {
   }
 
   out.push('');
+  return out;
+}
+
+function renderSparklineElement(element, props, stroke, fill) {
+  const out = [];
+  if (props.fill) out.push(`  display.fillRect(${n(element.x)}, ${n(element.y)}, ${n(element.w)}, ${n(element.h)}, ${fill});`);
+  if (props.showAxes) {
+    const axis = color(props.axis ?? '#526179');
+    out.push(`  display.drawRect(${n(element.x)}, ${n(element.y)}, ${n(element.w)}, ${n(element.h)}, ${axis});`);
+    out.push(`  display.drawLine(${n(element.x)}, ${n(element.y + element.h / 2)}, ${n(element.x + element.w - 1)}, ${n(element.y + element.h / 2)}, ${axis});`);
+    out.push(`  display.drawLine(${n(element.x + element.w / 2)}, ${n(element.y)}, ${n(element.x + element.w / 2)}, ${n(element.y + element.h - 1)}, ${axis});`);
+  }
   return out;
 }
 

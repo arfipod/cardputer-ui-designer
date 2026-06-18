@@ -27,11 +27,19 @@ const DEFAULTS = {
   rect: base('Rectangle', 16, 46, 70, 34, { fill: '#1d2635', stroke: '#4f6688', radius: 0 }),
   roundRect: base('Panel', 12, 38, 216, 72, { fill: '#111827', stroke: '#39506f', radius: 8 }),
   line: base('Line', 18, 66, 110, 1, { stroke: '#70d6ff', thickness: 1 }),
-  progress: base('Progress', 24, 62, 192, 14, { value: 62, min: 0, max: 100, fill: '#70d6ff', stroke: '#34445d', radius: 4 }),
+  progress: base('Progress', 24, 62, 192, 14, { value: 62, min: 0, max: 100, fill: '#70d6ff', stroke: '#34445d', radius: 4, orientation: 'horizontal' }),
   gauge: base('Gauge', 86, 26, 68, 68, { value: 72, min: 0, max: 100, fill: '#f6c177', stroke: '#526179', thickness: 6 }),
   led: base('LED', 198, 18, 14, 14, { fill: '#4ade80', stroke: '#b8ffce', text: 'ON' }),
   icon: base('Icon', 18, 18, 24, 24, { icon: 'wifi', color: '#70d6ff' }),
-  sparkline: base('Sparkline', 36, 82, 168, 28, { points: [16, 38, 24, 62, 46, 78, 64, 88, 72, 56, 94, 80], stroke: '#9bffb7', thickness: 2 }),
+  sparkline: base('Sparkline', 36, 82, 168, 28, {
+    mode: 'wave',
+    points: [0, 50, 8, 74, 16, 28, 24, 84, 32, 18, 40, 76, 48, 42, 56, 91, 64, 22, 72, 66, 80, 34, 88, 79, 100, 46],
+    fill: '#0b1018',
+    stroke: '#9bffb7',
+    axis: '#526179',
+    thickness: 2,
+    showAxes: true
+  }),
   image: base('Image placeholder', 148, 22, 58, 42, { imageLabel: 'bitmap', fill: '#1c2634', stroke: '#5b6f93', color: '#cbd5e1' })
 };
 
@@ -44,9 +52,10 @@ export function createDocument() {
     grid: { enabled: true, size: 5, snap: true },
     elements: [
       makeElement('roundRect', 'panel-1'),
-      makeElement('text', 'title-1', { x: 20, y: 20, w: 150, props: { text: 'CARDPUTER ADV', fontSize: 13 } }),
-      makeElement('progress', 'battery-1', { x: 20, y: 52, w: 138, h: 12, props: { value: 76 } }),
-      makeElement('led', 'status-led-1', { x: 198, y: 22, props: { text: 'BT' } }),
+    makeElement('text', 'title-1', { x: 20, y: 20, w: 150, props: { text: 'CARDPUTER ADV', fontSize: 13 } }),
+    makeElement('progress', 'battery-1', { x: 20, y: 52, w: 138, h: 12, props: { value: 76 } }),
+    makeElement('sparkline', 'wave-1', { x: 20, y: 70, w: 196, h: 16, props: { mode: 'wave', showAxes: true } }),
+    makeElement('led', 'status-led-1', { x: 198, y: 22, props: { text: 'BT' } }),
       makeElement('button', 'softkey-1', { x: 24, y: 92, w: 72, props: { text: 'MENU' } }),
       makeElement('button', 'softkey-2', { x: 144, y: 92, w: 72, props: { text: 'RUN' } })
     ]

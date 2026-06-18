@@ -147,6 +147,12 @@ function attrsForElement(project, element) {
   if ('stroke' in p) attrs.push(`style_border_color="${color(p.stroke)}"`);
   if ('color' in p) attrs.push(`style_text_color="${color(p.color)}"`);
   if ('radius' in p) attrs.push(`style_radius="${Math.round(p.radius ?? 0)}"`);
+  if ('thickness' in p) attrs.push(`cu:thickness="${Math.round(p.thickness ?? 1)}"`);
+  if ('orientation' in p) attrs.push(`cu:orientation="${attr(p.orientation ?? 'horizontal')}"`);
+  if ('mode' in p) attrs.push(`cu:mode="${attr(p.mode ?? 'static')}"`);
+  if ('axis' in p) attrs.push(`cu:axis_color="${color(p.axis)}"`);
+  if ('showAxes' in p) attrs.push(`cu:show_axes="${p.showAxes ? 'true' : 'false'}"`);
+  if ('points' in p) attrs.push(`cu:points="${attr((p.points ?? []).join(','))}"`);
   if ('value' in p) attrs.push(`value="${Math.round(p.value ?? 0)}"`);
   if ('min' in p) attrs.push(`min_value="${Math.round(p.min ?? 0)}"`);
   if ('max' in p) attrs.push(`max_value="${Math.round(p.max ?? 100)}"`);
@@ -226,6 +232,12 @@ function propsFromXml(node, type) {
   if (node.hasAttribute('style_border_color')) props.stroke = xmlColor(node.getAttribute('style_border_color'));
   if (node.hasAttribute('style_text_color')) props.color = xmlColor(node.getAttribute('style_text_color'));
   if (node.hasAttribute('style_radius')) props.radius = Number(node.getAttribute('style_radius'));
+  if (node.hasAttribute('cu:thickness')) props.thickness = Number(node.getAttribute('cu:thickness'));
+  if (node.hasAttribute('cu:orientation')) props.orientation = node.getAttribute('cu:orientation');
+  if (node.hasAttribute('cu:mode')) props.mode = node.getAttribute('cu:mode');
+  if (node.hasAttribute('cu:axis_color')) props.axis = xmlColor(node.getAttribute('cu:axis_color'));
+  if (node.hasAttribute('cu:show_axes')) props.showAxes = node.getAttribute('cu:show_axes') === 'true';
+  if (node.hasAttribute('cu:points')) props.points = node.getAttribute('cu:points').split(',').map((part) => Number(part.trim())).filter(Number.isFinite);
   if (node.hasAttribute('value')) props.value = Number(node.getAttribute('value'));
   if (node.hasAttribute('min_value')) props.min = Number(node.getAttribute('min_value'));
   if (node.hasAttribute('max_value')) props.max = Number(node.getAttribute('max_value'));

@@ -108,6 +108,15 @@ test('exports multi-screen vanilla firmware and LVGL-style XML', async () => {
   assert.match(firmware.files['cardputer_ui.h'], /enum CardputerScreenId/);
   assert.doesNotMatch(firmware.files['cardputer_ui.h'], /M5GFX|LGFX/);
   assert.match(firmware.files['cardputer_ui.cpp'], /CardputerTransition/);
+  assert.match(firmware.files['cardputer_ui.cpp'], /esp_timer_get_time/);
+  assert.match(firmware.files['cardputer_ui.cpp'], /drawRect\(20, 70, 196, 16/);
   assert.match(xml.files['project.xml'], /cu:flow/);
   assert.ok(xml.files['screens/main.xml']);
+});
+
+test('exports rotated progress bars as vertical fill', async () => {
+  let project = createProject();
+  project = updateElement(project, project.screens[0].id, 'battery-1', { w: 14, h: 72, props: { orientation: 'vertical', value: 50 } });
+  const firmware = await exportFirmwareProject(project);
+  assert.match(firmware.files['cardputer_ui.cpp'], /fillRoundRect\(22, 88, 10, 34/);
 });

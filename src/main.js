@@ -55,6 +55,7 @@ let future = [];
 let lastBundle = null;
 let lastStageViewportSize = '';
 let shouldCenterStage = true;
+let lastPreviewAnimationMs = 0;
 const loadedFonts = new Set();
 
 const app = document.querySelector('#app');
@@ -71,6 +72,7 @@ async function boot() {
   mount();
   bindEvents();
   render();
+  requestAnimationFrame(previewAnimationLoop);
 }
 
 function mount() {
@@ -89,6 +91,8 @@ function mount() {
           <button data-action="export-json">Export JSON</button>
           <button data-action="export-xml">LVGL XML</button>
           <button data-action="export-firmware">Firmware Bundle</button>
+          <button data-action="firmware-build">Build Board</button>
+          <button data-action="firmware-flash">Upload Board</button>
           <button data-action="export-png">Export PNG</button>
           <label class="file-button">Import <input id="import-file" type="file" accept="application/json,.json,.xml,.txt" /></label>
         </div>
@@ -176,6 +180,18 @@ function mount() {
         </section>
         <section>
           <h2>Output</h2>
+          <p class="muted firmware-status" id="firmware-status">Local board actions use the dev server and PlatformIO.</p>
+          <details class="firmware-terminal" id="firmware-terminal">
+            <summary>
+              <span>Firmware terminal</span>
+              <em id="firmware-terminal-state">Idle</em>
+            </summary>
+            <pre id="firmware-log" aria-live="polite">No firmware logs yet.</pre>
+            <div class="output-actions">
+              <button data-action="copy-terminal">Copy log</button>
+              <button data-action="clear-terminal">Clear log</button>
+            </div>
+          </details>
           <textarea id="output" spellcheck="false" placeholder="Generated code, XML or JSON appears here"></textarea>
           <div class="output-actions">
             <button data-action="copy-output">Copy</button>
@@ -338,8 +354,12 @@ async function runAction(action) {
   if (action === 'export-json') showBundle(exportJson(project));
   if (action === 'export-xml') showBundle(exportXml(project));
   if (action === 'export-firmware') showBundle(await exportFirmware(project));
+  if (action === 'firmware-build') await runFirmwareAction('build');
+  if (action === 'firmware-flash') await runFirmwareAction('flash');
   if (action === 'export-png') exportPng();
   if (action === 'copy-output') navigator.clipboard.writeText(query('#output').value);
+  if (action === 'copy-terminal') navigator.clipboard.writeText(query('#firmware-log').textContent ?? '');
+  if (action === 'clear-terminal') clearFirmwareTerminal();
   if (action === 'download-output' && lastBundle) downloadText(lastBundle);
   if (action === 'context-duplicate') duplicateSelected();
   if (action === 'context-delete') deleteSelected();
@@ -484,7 +504,12 @@ function renderElementSvg(element) {
   if (element.type === 'progress') {
     const ratio = valueRatio(p.value, p.min, p.max);
     group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, rx: p.radius ?? 0, fill: 'transparent', stroke: p.stroke }));
-    group.append(svg('rect', { x: element.x + 2, y: element.y + 2, width: Math.max(0, (element.w - 4) * ratio), height: Math.max(1, element.h - 4), rx: Math.max(0, (p.radius ?? 0) - 2), fill: p.fill }));
+    if (p.orientation === 'vertical') {
+      const filled = Math.max(0, (element.h - 4) * ratio);
+      group.append(svg('rect', { x: element.x + 2, y: element.y + element.h - 2 - filled, width: Math.max(1, element.w - 4), height: filled, rx: Math.max(0, (p.radius ?? 0) - 2), fill: p.fill }));
+    } else {
+      group.append(svg('rect', { x: element.x + 2, y: element.y + 2, width: Math.max(0, (element.w - 4) * ratio), height: Math.max(1, element.h - 4), rx: Math.max(0, (p.radius ?? 0) - 2), fill: p.fill }));
+    }
   }
   if (element.type === 'gauge') {
     const cx = element.x + element.w / 2;
@@ -505,8 +530,15 @@ function renderElementSvg(element) {
     group.append(text);
   }
   if (element.type === 'sparkline') {
-    const points = p.points ?? [];
+    const points = sparklinePreviewPoints(element);
     const coords = [];
+    group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, fill: p.fill ?? 'transparent' }));
+    if (p.showAxes) {
+      const axis = p.axis ?? '#526179';
+      group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, fill: 'transparent', stroke: axis, 'stroke-width': 1 }));
+      group.append(svg('line', { x1: element.x, y1: element.y + element.h / 2, x2: element.x + element.w, y2: element.y + element.h / 2, stroke: axis, 'stroke-width': 0.75 }));
+      group.append(svg('line', { x1: element.x + element.w / 2, y1: element.y, x2: element.x + element.w / 2, y2: element.y + element.h, stroke: axis, 'stroke-width': 0.75 }));
+    }
     for (let index = 0; index < points.length - 1; index += 2) coords.push(`${element.x + (points[index] / 100) * element.w},${element.y + element.h - (points[index + 1] / 100) * element.h}`);
     group.append(svg('polyline', { points: coords.join(' '), fill: 'none', stroke: p.stroke, 'stroke-width': p.thickness ?? 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
   }
@@ -529,6 +561,35 @@ function renderSelection(element) {
     ['resize-se', element.x + element.w, element.y + element.h]
   ].forEach(([mode, x, y]) => group.append(svg('rect', { x: x - 2.5, y: y - 2.5, width: 5, height: 5, class: 'handle', 'data-id': element.id, 'data-mode': mode })));
   return group;
+}
+
+function sparklinePreviewPoints(element) {
+  const p = element.props;
+  if (p.mode !== 'wave') return p.points ?? [];
+
+  const now = performance.now() / 1000;
+  const samples = Math.max(16, Math.min(64, Math.round(element.w / 4)));
+  const points = [];
+  for (let i = 0; i < samples; i += 1) {
+    const xRatio = samples <= 1 ? 0 : i / (samples - 1);
+    const value = clamp(
+      50 +
+        Math.sin(now * 7 + xRatio * 24) * (22 + 18 * Math.sin(now * 2.1)) +
+        Math.sin(now * 18 + xRatio * 53) * 16,
+      0,
+      100
+    );
+    points.push(xRatio * 100, value);
+  }
+  return points;
+}
+
+function previewAnimationLoop(nowMs) {
+  if (nowMs - lastPreviewAnimationMs > 40 && activeScreen().elements.some((element) => element.visible && element.type === 'sparkline' && element.props.mode === 'wave')) {
+    lastPreviewAnimationMs = nowMs;
+    renderStage();
+  }
+  requestAnimationFrame(previewAnimationLoop);
 }
 
 function renderLayers() {
@@ -571,8 +632,12 @@ function renderInspector() {
   if ('max' in element.props) inspector.append(inputField('Max', 'number', element.props.max ?? 100, (value) => changeProp('max', Number(value))));
   if ('radius' in element.props) inspector.append(inputField('Radius', 'number', element.props.radius ?? 0, (value) => changeProp('radius', Number(value))));
   if ('thickness' in element.props) inspector.append(inputField('Thickness', 'number', element.props.thickness ?? 1, (value) => changeProp('thickness', Number(value))));
+  if ('orientation' in element.props) inspector.append(selectField('Orientation', [['horizontal', 'Horizontal'], ['vertical', 'Vertical 90deg']], element.props.orientation ?? 'horizontal', (value) => changeProp('orientation', value)));
+  if ('mode' in element.props) inspector.append(selectField('Mode', [['static', 'Static points'], ['wave', 'Animated wave']], element.props.mode ?? 'static', (value) => changeProp('mode', value)));
+  if ('showAxes' in element.props) inspector.append(checkboxField('Show axes', element.props.showAxes, (checked) => changeProp('showAxes', checked)));
   if ('fill' in element.props) inspector.append(colorField('Component color', element.props.fill ?? '#000000', (value) => changeProp('fill', value)));
   if ('stroke' in element.props) inspector.append(colorField('Border / line color', element.props.stroke ?? '#ffffff', (value) => changeProp('stroke', value)));
+  if ('axis' in element.props) inspector.append(colorField('Axis color', element.props.axis ?? '#526179', (value) => changeProp('axis', value)));
   if ('color' in element.props) inspector.append(colorField(element.type === 'icon' ? 'Icon color' : 'Text color', element.props.color ?? '#ffffff', (value) => changeProp('color', value)));
   if ('icon' in element.props) inspector.append(selectField('Icon', ['wifi', 'sd', 'battery', 'audio', 'imu'], element.props.icon ?? 'wifi', (value) => changeProp('icon', value)));
   if ('align' in element.props) inspector.append(selectField('Align', ['left', 'center', 'right'], element.props.align ?? 'left', (value) => changeProp('align', value)));
@@ -936,6 +1001,108 @@ function redo() {
 function showBundle(bundle) {
   lastBundle = bundle;
   query('#output').value = bundle.content;
+}
+
+async function runFirmwareAction(command) {
+  const status = query('#firmware-status');
+  const label = command === 'flash' ? 'Uploading' : 'Building';
+  status.textContent = `${label} current UI...`;
+  openFirmwareTerminal();
+  setFirmwareTerminalState('Running');
+  setFirmwareLog(`[${new Date().toLocaleTimeString()}] ${label} current UI...\n`);
+  appendFirmwareLog('Generating firmware sources from the current designer state...\n');
+  await nextFrame();
+
+  try {
+    const bundle = await exportFirmware(project);
+    appendFirmwareLog('Running PlatformIO on the local dev server...\n\n');
+    await nextFrame();
+    const response = await fetch('/api/firmware/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command, project, files: bundle.files })
+    });
+    if (!response.ok) {
+      throw new Error(`Firmware ${command} failed with HTTP ${response.status}.`);
+    }
+    const output = await readFirmwareLogStream(response);
+    if (output.includes('[cardputer-ui] ERROR:')) {
+      throw new Error(output.split('[cardputer-ui] ERROR:').at(-1).trim() || `Firmware ${command} failed.`);
+    }
+    setFirmwareTerminalState('Done');
+    status.textContent = command === 'flash'
+      ? 'Uploaded current UI.'
+      : 'Build completed for current UI.';
+    lastBundle = {
+      filename: `${project.meta.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'cardputer-ui'}-${command}.log`,
+      mimeType: 'text/plain',
+      content: output
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    status.textContent = 'Board action failed.';
+    setFirmwareTerminalState('Failed');
+    const help = 'Run npm run dev locally, install PlatformIO CLI, and connect the Cardputer Adv over USB.';
+    const currentLog = query('#firmware-log').textContent ?? '';
+    appendFirmwareLog(`${currentLog.includes(message) ? '' : `${message}\n\n`}${help}`);
+  }
+}
+
+function openFirmwareTerminal() {
+  query('#firmware-terminal').open = true;
+}
+
+function setFirmwareTerminalState(state) {
+  query('#firmware-terminal-state').textContent = state;
+}
+
+function setFirmwareLog(value) {
+  const log = query('#firmware-log');
+  log.textContent = value;
+  log.scrollTop = log.scrollHeight;
+}
+
+function appendFirmwareLog(value) {
+  const log = query('#firmware-log');
+  const prefix = log.textContent === 'No firmware logs yet.' ? '' : log.textContent;
+  log.textContent = `${prefix}${value}`;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function readFirmwareLogStream(response) {
+  if (!response.body) {
+    const text = await response.text();
+    appendFirmwareLog(text);
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let output = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    output += chunk;
+    appendFirmwareLog(chunk);
+  }
+
+  const tail = decoder.decode();
+  if (tail) {
+    output += tail;
+    appendFirmwareLog(tail);
+  }
+  return output;
+}
+
+function clearFirmwareTerminal() {
+  setFirmwareTerminalState('Idle');
+  setFirmwareLog('No firmware logs yet.');
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function downloadText(bundle) {

@@ -354,6 +354,67 @@ input[type="color"] {
   align-items: center;
 }
 
+.firmware-terminal {
+  margin-bottom: 0.75rem;
+  border: 1px solid #263147;
+  border-radius: 8px;
+  background: #070b11;
+  overflow: hidden;
+}
+
+.firmware-terminal summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.65rem;
+  color: #d9e5f7;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.firmware-terminal summary::marker,
+.firmware-terminal summary::-webkit-details-marker {
+  display: none;
+}
+
+.firmware-terminal summary::before {
+  content: "+";
+  color: #68d5ff;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.firmware-terminal[open] summary::before {
+  content: "-";
+}
+
+.firmware-terminal em {
+  color: #8f9bad;
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+#firmware-log {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  padding: 0.7rem;
+  border-top: 1px solid #1b2434;
+  background: #05080d;
+  color: #a8ffbe;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.firmware-terminal .output-actions {
+  padding: 0.55rem;
+  border-top: 1px solid #1b2434;
+}
+
 #output {
   min-height: 280px;
   resize: vertical;

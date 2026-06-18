@@ -12,55 +12,87 @@ const firmwareDir = join(root, 'firmware', 'cardputer_adv_ui_test');
 const generatedDir = join(firmwareDir, 'src', 'generated');
 const defaultProjectPath = join(firmwareDir, 'generated-project.cardputer-ui.json');
 const envName = 'cardputer_adv';
+const commands = ['prepare', 'build', 'check', 'upload', 'flash', 'monitor', 'ports'];
 
-const [command = 'help', maybeProjectPath] = process.argv.slice(2);
+const isCli = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (command === 'help' || command === '--help' || command === '-h') {
-  printHelp();
-  process.exit(0);
-}
+if (isCli) {
+  const [command = 'help', maybeProjectPath] = process.argv.slice(2);
 
-if (!['prepare', 'build', 'check', 'upload', 'monitor', 'ports'].includes(command)) {
-  console.error(`Unknown command: ${command}`);
-  printHelp();
-  process.exit(1);
-}
-
-try {
-  if (command === 'ports') {
-    listPorts();
-  } else if (command === 'monitor') {
-    monitor();
-  } else if (command === 'prepare') {
-    await prepare(maybeProjectPath);
-  } else if (command === 'build' || command === 'check') {
-    await prepare(maybeProjectPath);
-    pio(['run', '-d', firmwareDir, '-e', envName]);
-  } else if (command === 'upload') {
-    await prepare(maybeProjectPath);
-    const port = process.env.CARDPUTER_PORT || detectCardputerPort();
-    if (!port) throw new Error('No Cardputer USB serial port found. Set CARDPUTER_PORT=COMx and retry.');
-    console.log(`Using upload port ${port}`);
-    pio(['run', '-d', firmwareDir, '-e', envName, '-t', 'upload', '--upload-port', port]);
+  if (command === 'help' || command === '--help' || command === '-h') {
+    printHelp();
+    process.exit(0);
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+
+  try {
+    await runFirmwareCommand(command, { projectPath: maybeProjectPath });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
 
-async function prepare(projectPath) {
-  const project = loadProject(projectPath);
-  const bundle = await exportFirmwareProject(project);
+export async function runFirmwareCommand(command, options = {}) {
+  if (!commands.includes(command)) {
+    throw new Error(`Unknown command: ${command}`);
+  }
+
+  const result = { command, logs: [] };
+  const log = (message = '') => {
+    result.logs.push(String(message));
+    if (!options.capture) console.log(message);
+  };
+
+  if (command === 'ports') {
+    result.ports = listPorts(options);
+    return result;
+  }
+
+  if (command === 'monitor') {
+    monitor(options);
+    return result;
+  }
+
+  if (command === 'prepare') {
+    await prepare(options, log);
+    return result;
+  }
+
+  if (command === 'build' || command === 'check') {
+    await prepare(options, log);
+    pio(['run', '-d', firmwareDir, '-e', envName], options, result);
+    return result;
+  }
+
+  if (command === 'upload' || command === 'flash') {
+    await prepare(options, log);
+    const port = options.port || options.env?.CARDPUTER_PORT || process.env.CARDPUTER_PORT || detectCardputerPort(options, result);
+    if (!port) throw new Error('No Cardputer USB serial port found. Set CARDPUTER_PORT=COMx and retry.');
+    result.port = port;
+    log(`Using upload port ${port}`);
+    pio(['run', '-d', firmwareDir, '-e', envName, '-t', 'upload', '--upload-port', port], options, result);
+    return result;
+  }
+
+  return result;
+}
+
+async function prepare(options = {}, log = console.log) {
+  const project = loadProject(options.projectPath, options.projectRaw);
+  const bundle = options.generatedFiles
+    ? { files: options.generatedFiles }
+    : await exportFirmwareProject(project);
   resetGeneratedDir();
   for (const [name, content] of Object.entries(bundle.files)) {
     if (!/^cardputer_ui.*\.(h|cpp)$/.test(name)) continue;
     writeFileSync(join(generatedDir, name), content);
   }
   writeFileSync(defaultProjectPath, serializeProject(project));
-  console.log(`Generated firmware sources in ${relative(generatedDir)}`);
+  log(`Generated firmware sources in ${relative(generatedDir)}`);
 }
 
-function loadProject(projectPath) {
+function loadProject(projectPath, projectRaw) {
+  if (projectRaw) return parseDesignProject(projectRaw);
   if (!projectPath) {
     const project = createProject();
     console.log('No project JSON provided; using the default designer project.');
@@ -78,8 +110,9 @@ function resetGeneratedDir() {
   mkdirSync(resolved, { recursive: true });
 }
 
-function detectCardputerPort() {
+function detectCardputerPort(options = {}, commandResult = null) {
   const result = spawnSync('pio', ['device', 'list', '--json-output'], { encoding: 'utf8' });
+  if (options.capture && commandResult) appendProcessOutput(commandResult, result);
   if (result.status !== 0) return '';
   const devices = JSON.parse(result.stdout || '[]');
   const usbDevice = devices.find((device) => /VID:PID=303A:1001/i.test(device.hwid || ''));
@@ -88,19 +121,32 @@ function detectCardputerPort() {
   return serialUsb?.port || '';
 }
 
-function listPorts() {
-  pio(['device', 'list']);
+function listPorts(options = {}) {
+  const result = pio(['device', 'list'], options, { logs: [] });
+  return result.stdout || '';
 }
 
-function monitor() {
-  const port = process.env.CARDPUTER_PORT || detectCardputerPort();
+function monitor(options = {}) {
+  const port = options.port || options.env?.CARDPUTER_PORT || process.env.CARDPUTER_PORT || detectCardputerPort(options);
   if (!port) throw new Error('No Cardputer USB serial port found. Set CARDPUTER_PORT=COMx and retry.');
-  pio(['device', 'monitor', '-p', port, '-b', '115200']);
+  pio(['device', 'monitor', '-p', port, '-b', '115200'], options);
 }
 
-function pio(args) {
-  const result = spawnSync('pio', args, { cwd: root, stdio: 'inherit' });
-  if (result.status !== 0) throw new Error(`PlatformIO failed: pio ${args.join(' ')}`);
+function pio(args, options = {}, commandResult = null) {
+  const result = options.capture
+    ? spawnSync('pio', args, { cwd: root, encoding: 'utf8' })
+    : spawnSync('pio', args, { cwd: root, stdio: 'inherit' });
+  if (options.capture && commandResult) appendProcessOutput(commandResult, result);
+  if (result.status !== 0) {
+    const detail = options.capture ? [result.stdout, result.stderr].filter(Boolean).join('\n').trim() : '';
+    throw new Error(`PlatformIO failed: pio ${args.join(' ')}${detail ? `\n\n${detail}` : ''}`);
+  }
+  return result;
+}
+
+function appendProcessOutput(commandResult, result) {
+  if (result.stdout) commandResult.logs.push(result.stdout.trimEnd());
+  if (result.stderr) commandResult.logs.push(result.stderr.trimEnd());
 }
 
 function relative(path) {
@@ -114,6 +160,7 @@ Usage:
   node scripts/cardputer-firmware.mjs prepare [project.cardputer-ui.json]
   node scripts/cardputer-firmware.mjs build [project.cardputer-ui.json]
   node scripts/cardputer-firmware.mjs upload [project.cardputer-ui.json]
+  node scripts/cardputer-firmware.mjs flash [project.cardputer-ui.json]
   node scripts/cardputer-firmware.mjs monitor
   node scripts/cardputer-firmware.mjs ports
 

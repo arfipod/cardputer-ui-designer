@@ -15,6 +15,7 @@
     "firmware:build": "node scripts/cardputer-firmware.mjs build",
     "firmware:check": "node scripts/cardputer-firmware.mjs check",
     "firmware:upload": "node scripts/cardputer-firmware.mjs upload",
+    "firmware:flash": "node scripts/cardputer-firmware.mjs flash",
     "firmware:monitor": "node scripts/cardputer-firmware.mjs monitor"
   },
   "keywords": [
