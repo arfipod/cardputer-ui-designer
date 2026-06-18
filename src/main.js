@@ -28,6 +28,9 @@ import { clamp, snap, svgPoint, valueRatio } from './core/geometry.js';
 import { loadProject, parseDesignProject, saveProject } from './core/storage.js';
 import { exportFirmware, exportJson, exportXml } from './exporters/project.js';
 import { importXmlProject } from './exporters/xml.js';
+import { createActionRegistry } from './app/actions/actionRegistry.js';
+import { registerEditorActions } from './app/actions/editorActions.js';
+import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
 
 const ELEMENTS = [
   ['text', 'Text'],
@@ -57,10 +60,12 @@ let lastStageViewportSize = '';
 let shouldCenterStage = true;
 let lastPreviewAnimationMs = 0;
 const loadedFonts = new Set();
+const actions = createActionRegistry();
 
 const app = document.querySelector('#app');
 if (!app) throw new Error('Missing #app');
 
+registerEditorActions(actions, createEditorCommands());
 boot();
 
 async function boot() {
@@ -210,12 +215,10 @@ function bindEvents() {
     const action = target.closest?.('[data-action]')?.dataset.action;
 
     if (tool) {
-      commit(addElement(project, selectedScreenId, tool));
-      selectedId = activeScreen().elements.at(-1)?.id ?? null;
-      render();
+      await actions.run('element-add', createActionContext({ type: tool }));
     }
 
-    if (action) await runAction(action);
+    if (action) await actions.run(action, createActionContext());
   });
 
   query('#project-name').addEventListener('change', (event) => {
@@ -229,42 +232,29 @@ function bindEvents() {
   });
 
   query('#zoom').addEventListener('input', (event) => {
-    zoom = Number(event.target.value);
-    renderStage();
+    void actions.run('zoom-set', createActionContext({ zoom: Number(event.target.value) }));
   });
 
   query('#grid-enabled').addEventListener('change', (event) => {
-    commit(updateGrid(project, { enabled: event.target.checked }));
-    render();
+    void actions.run('grid-enabled-set', createActionContext({ enabled: event.target.checked }));
   });
 
   query('#snap-enabled').addEventListener('change', (event) => {
-    commit(updateGrid(project, { snap: event.target.checked }));
-    render();
+    void actions.run('grid-snap-set', createActionContext({ snap: event.target.checked }));
   });
 
   query('#grid-size').addEventListener('change', (event) => {
-    commit(updateGrid(project, { size: clamp(Number(event.target.value), 1, 24) }));
-    render();
+    void actions.run('grid-size-set', createActionContext({ size: Number(event.target.value) }));
   });
 
   query('#device-preset').addEventListener('change', (event) => {
-    commit(setDevice(project, event.target.value));
-    render();
+    void actions.run('device-set', createActionContext({ deviceId: event.target.value }));
   });
 
   query('#import-file').addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const raw = await file.text();
-    const imported = file.name.endsWith('.xml') || raw.includes('<!-- ===== project.xml ===== -->')
-      ? importXmlProject(raw)
-      : parseDesignProject(raw);
-    commit(imported);
-    selectedScreenId = imported.flow.startScreenId;
-    selectedId = activeScreen().elements.at(-1)?.id ?? null;
-    await registerProjectFonts(project);
-    render();
+    await actions.run('project-import', createActionContext({ file }));
     event.target.value = '';
   });
 
@@ -301,74 +291,58 @@ function bindEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-      event.preventDefault();
-      undo();
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
-      event.preventDefault();
-      redo();
-    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
-      event.preventDefault();
-      duplicateSelected();
-    } else if (event.key === 'Delete' || event.key === 'Backspace') {
-      event.preventDefault();
-      deleteSelected();
-    } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
-      event.preventDefault();
-      nudge(event.key, event.shiftKey ? 5 : 1);
-    }
+    void runKeyboardShortcut(event, actions, createActionContext());
   });
 }
 
-async function runAction(action) {
-  if (action === 'undo') undo();
-  if (action === 'redo') redo();
-  if (action === 'duplicate') duplicateSelected();
-  if (action === 'delete') deleteSelected();
-  if (action === 'center') centerSelected();
-  if (action === 'center-stage') centerStageInViewport();
-  if (action === 'reset' && confirm('Create a new project?')) {
-    commit(createProject());
-    selectedScreenId = project.flow.startScreenId;
-    selectedId = activeScreen().elements.at(-1)?.id ?? null;
-    render();
-  }
-  if (action === 'screen-add') addNewScreen();
-  if (action === 'screen-duplicate') duplicateActiveScreen();
-  if (action === 'screen-delete') deleteActiveScreen();
-  if (action === 'screen-start') {
-    commit({ ...project, flow: { ...project.flow, startScreenId: selectedScreenId } });
-    render();
-  }
-  if (action === 'flow-add') addTransitionFromSelected();
-  if (action === 'flow-delete' && selectedTransitionId) {
-    commit(removeTransition(project, selectedTransitionId));
-    selectedTransitionId = null;
-    render();
-  }
-  if (action === 'layer-up') moveSelectedLayer('up');
-  if (action === 'layer-down') moveSelectedLayer('down');
-  if (action === 'layer-front') moveSelectedLayer('front');
-  if (action === 'layer-back') moveSelectedLayer('back');
-  if (action === 'export-json') showBundle(exportJson(project));
-  if (action === 'export-xml') showBundle(exportXml(project));
-  if (action === 'export-firmware') showBundle(await exportFirmware(project));
-  if (action === 'firmware-build') await runFirmwareAction('build');
-  if (action === 'firmware-flash') await runFirmwareAction('flash');
-  if (action === 'export-png') exportPng();
-  if (action === 'copy-output') navigator.clipboard.writeText(query('#output').value);
-  if (action === 'copy-terminal') navigator.clipboard.writeText(query('#firmware-log').textContent ?? '');
-  if (action === 'clear-terminal') clearFirmwareTerminal();
-  if (action === 'download-output' && lastBundle) downloadText(lastBundle);
-  if (action === 'context-duplicate') duplicateSelected();
-  if (action === 'context-delete') deleteSelected();
-  if (action === 'context-center') centerSelected();
-  if (action === 'asset-delete' && selectedAssetId) {
-    commit(removeFont(project, selectedAssetId));
-    selectedAssetId = project.assets.fonts[0]?.id ?? null;
-    render();
-  }
+function createEditorCommands() {
+  return {
+    addElement: addNewElement,
+    addScreen: addNewScreen,
+    addTransitionFromSelected,
+    centerSelected,
+    centerStage: centerStageInViewport,
+    clearTerminal: clearFirmwareTerminal,
+    copyOutput: () => navigator.clipboard.writeText(query('#output').value),
+    copyTerminal: () => navigator.clipboard.writeText(query('#firmware-log').textContent ?? ''),
+    deleteScreen: deleteActiveScreen,
+    deleteSelected,
+    deleteSelectedAsset,
+    deleteSelectedTransition,
+    downloadOutput: () => lastBundle && downloadText(lastBundle),
+    duplicateScreen: duplicateActiveScreen,
+    duplicateSelected,
+    exportFirmware: async () => showBundle(await exportFirmware(project)),
+    exportJson: () => showBundle(exportJson(project)),
+    exportPng,
+    exportXml: () => showBundle(exportXml(project)),
+    importProject,
+    moveSelectedLayer,
+    nudge,
+    redo,
+    resetProject,
+    runFirmware: runFirmwareAction,
+    setDevice: setDevicePreset,
+    setGridEnabled,
+    setGridSize,
+    setGridSnap,
+    setStartScreen,
+    setZoom,
+    undo
+  };
+}
+
+function createActionContext(payload) {
+  return {
+    payload,
+    canDeleteScreen: () => project.screens.length > 1,
+    canRedo: () => future.length > 0,
+    canUndo: () => history.length > 1,
+    hasBundle: () => Boolean(lastBundle),
+    hasSelectedAsset: () => Boolean(selectedAssetId),
+    hasSelection: () => Boolean(selectedId),
+    hasTransition: () => Boolean(selectedTransitionId)
+  };
 }
 
 function render() {
@@ -718,6 +692,57 @@ function setElementEvent(element, trigger, toScreenId) {
   render();
 }
 
+function addNewElement(type) {
+  commit(addElement(project, selectedScreenId, type));
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  render();
+}
+
+async function importProject(file) {
+  const raw = await file.text();
+  const imported = file.name.endsWith('.xml') || raw.includes('<!-- ===== project.xml ===== -->')
+    ? importXmlProject(raw)
+    : parseDesignProject(raw);
+  commit(imported);
+  selectedScreenId = imported.flow.startScreenId;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  await registerProjectFonts(project);
+  render();
+}
+
+function setZoom(value) {
+  zoom = value;
+  renderStage();
+}
+
+function setGridEnabled(enabled) {
+  commit(updateGrid(project, { enabled }));
+  render();
+}
+
+function setGridSnap(snapEnabled) {
+  commit(updateGrid(project, { snap: snapEnabled }));
+  render();
+}
+
+function setGridSize(size) {
+  commit(updateGrid(project, { size: clamp(size, 1, 24) }));
+  render();
+}
+
+function setDevicePreset(deviceId) {
+  commit(setDevice(project, deviceId));
+  render();
+}
+
+function resetProject() {
+  if (!confirm('Create a new project?')) return;
+  commit(createProject());
+  selectedScreenId = project.flow.startScreenId;
+  selectedId = activeScreen().elements.at(-1)?.id ?? null;
+  render();
+}
+
 function addNewScreen() {
   commit(addScreen(project));
   selectedScreenId = project.screens.at(-1).id;
@@ -742,6 +767,11 @@ function deleteActiveScreen() {
   render();
 }
 
+function setStartScreen() {
+  commit({ ...project, flow: { ...project.flow, startScreenId: selectedScreenId } });
+  render();
+}
+
 function addTransitionFromSelected() {
   const element = getSelected();
   const target = project.screens.find((screen) => screen.id !== selectedScreenId);
@@ -749,6 +779,20 @@ function addTransitionFromSelected() {
   const existing = project.flow.transitions.find((transition) => transition.fromScreenId === selectedScreenId && transition.elementId === element.id && transition.trigger === 'press');
   if (existing) return;
   commit(addTransition(updateElement(project, selectedScreenId, element.id, { events: { press: target.slug } }), { fromScreenId: selectedScreenId, elementId: element.id, trigger: 'press', toScreenId: target.id }));
+  render();
+}
+
+function deleteSelectedTransition() {
+  if (!selectedTransitionId) return;
+  commit(removeTransition(project, selectedTransitionId));
+  selectedTransitionId = null;
+  render();
+}
+
+function deleteSelectedAsset() {
+  if (!selectedAssetId) return;
+  commit(removeFont(project, selectedAssetId));
+  selectedAssetId = project.assets.fonts[0]?.id ?? null;
   render();
 }
 

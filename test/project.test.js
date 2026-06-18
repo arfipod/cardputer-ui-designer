@@ -18,6 +18,7 @@ import { m5gfxTextSize, m5gfxTextWidth } from '../src/core/m5gfxText.js';
 import { parseDesignProject, serializeProject } from '../src/core/storage.js';
 import { exportFirmwareProject } from '../src/exporters/firmware.js';
 import { exportXmlProject } from '../src/exporters/xml.js';
+import { CAPTURE_MODE, createActionRegistry } from '../src/app/actions/actionRegistry.js';
 
 test('creates a Cardputer project with a start screen', () => {
   const project = createProject();
@@ -27,6 +28,25 @@ test('creates a Cardputer project with a start screen', () => {
   assert.equal(project.screens.length, 1);
   assert.equal(project.flow.startScreenId, project.screens[0].id);
   assert.ok(project.screens[0].elements.length >= 4);
+});
+
+test('registers and runs dependency-free editor actions', async () => {
+  const registry = createActionRegistry();
+  const calls = [];
+  registry.register({
+    id: 'demo-action',
+    label: 'Demo action',
+    shortcut: 'mod+d',
+    capture: CAPTURE_MODE.immediate,
+    canRun: (ctx) => ctx.enabled,
+    run: (ctx) => calls.push(ctx.payload.value)
+  });
+
+  assert.equal(registry.canRun('demo-action', { enabled: false }), false);
+  assert.equal(await registry.run('demo-action', { enabled: false, payload: { value: 1 } }), false);
+  assert.equal(await registry.run('demo-action', { enabled: true, payload: { value: 2 } }), true);
+  assert.deepEqual(calls, [2]);
+  assert.equal(registry.get('demo-action').shortcut, 'mod+d');
 });
 
 test('migrates version 2 documents without losing elements', () => {
