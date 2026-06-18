@@ -7,7 +7,9 @@ import {
   addTransition,
   cleanupFlow,
   createProject,
+  duplicateElements,
   duplicateScreen,
+  removeElements,
   removeScreen,
   updateElement
 } from '../src/core/project.js';
@@ -76,6 +78,14 @@ test('keeps project and editor state stores separate', () => {
   assert.equal(projectStore.canUndo(), true);
   assert.equal(projectStore.undo().screens.length, 1);
   assert.equal(editorStore.getState().selectedElementId, project.screens[0].elements[0].id);
+  assert.deepEqual(editorStore.getState().selectedElementIds, [project.screens[0].elements[0].id]);
+
+  editorStore.selectElements([project.screens[0].elements[0].id, project.screens[0].elements[1].id]);
+  assert.equal(editorStore.getState().selectedElementId, project.screens[0].elements[0].id);
+  assert.deepEqual(editorStore.getState().selectedElementIds, [project.screens[0].elements[0].id, project.screens[0].elements[1].id]);
+  editorStore.toggleElementSelection(project.screens[0].elements[0].id);
+  assert.deepEqual(editorStore.getState().selectedElementIds, [project.screens[0].elements[1].id]);
+  assert.equal(editorStore.getState().selectedElementId, project.screens[0].elements[1].id);
 
   const persisted = JSON.parse(serializeProject(projectStore.getPersistentProject()));
   assert.equal(persisted.selectedElementId, undefined);
@@ -169,6 +179,35 @@ test('captures project history by explicit mode', () => {
   current = updateElement(projectStore.getProject(), screenId, elementId, { x: originalX + 30 });
   projectStore.replaceProject(current);
   assert.equal(projectStore.canUndo(), false);
+});
+
+test('multi-element project operations capture as one undoable change', () => {
+  const initial = createProject();
+  const screenId = initial.flow.startScreenId;
+  const [first, second] = initial.screens[0].elements;
+  const projectStore = createProjectStore(initial);
+
+  let moved = [first, second].reduce(
+    (current, element) => updateElement(current, screenId, element.id, { x: element.x + 7, y: element.y + 3 }),
+    projectStore.getProject()
+  );
+  projectStore.commit(moved);
+  assert.equal(projectStore.getProject().screens[0].elements[0].x, first.x + 7);
+  assert.equal(projectStore.getProject().screens[0].elements[1].y, second.y + 3);
+  assert.equal(projectStore.undo().screens[0].elements[0].x, first.x);
+  assert.equal(projectStore.redo().screens[0].elements[1].y, second.y + 3);
+
+  const beforeDuplicateCount = projectStore.getProject().screens[0].elements.length;
+  projectStore.commit(duplicateElements(projectStore.getProject(), screenId, [first.id, second.id]));
+  assert.equal(projectStore.getProject().screens[0].elements.length, beforeDuplicateCount + 2);
+  assert.deepEqual(projectStore.getProject().screens[0].elements.slice(-2).map((element) => element.name), [`${first.name} copy`, `${second.name} copy`]);
+  assert.equal(projectStore.undo().screens[0].elements.length, beforeDuplicateCount);
+  projectStore.redo();
+
+  projectStore.commit(removeElements(projectStore.getProject(), screenId, [first.id, second.id]));
+  assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === first.id), false);
+  assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === second.id), false);
+  assert.equal(projectStore.undo().screens[0].elements.some((element) => element.id === first.id), true);
 });
 
 test('migrates version 2 documents without losing elements', () => {

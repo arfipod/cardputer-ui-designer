@@ -7,12 +7,12 @@ import {
   addTransition,
   cleanupFlow,
   createProject,
-  duplicateElement,
+  duplicateElements,
   duplicateScreen,
   getElement,
   getScreen,
   moveLayer,
-  removeElement,
+  removeElements,
   removeFont,
   removeScreen,
   removeTransition,
@@ -36,7 +36,7 @@ import { runKeyboardShortcut } from './app/actions/keyboardShortcuts.js';
 import { createEditorStore } from './app/state/editorStore.js';
 import { CAPTURE_MODE } from './app/state/history.js';
 import { createProjectStore, firstElementId } from './app/state/projectStore.js';
-import { activeScreen as selectActiveScreen, selectedElement as selectSelectedElement, selectedScreenExists } from './app/state/selectors.js';
+import { activeScreen as selectActiveScreen, elementBounds, selectedElement as selectSelectedElement, selectedElementIds as selectSelectedElementIds, selectedElements as selectSelectedElements, selectedScreenExists } from './app/state/selectors.js';
 
 const ELEMENTS = [
   ['text', 'Text'],
@@ -349,7 +349,7 @@ function createActionContext(payload) {
     canUndo: () => projectStore.canUndo(),
     hasBundle: () => Boolean(lastBundle),
     hasSelectedAsset: () => Boolean(editorState.selectedAssetId),
-    hasSelection: () => Boolean(editorState.selectedElementId),
+    hasSelection: () => getSelectedIds().length > 0,
     hasTransition: () => Boolean(editorState.selectedTransitionId)
   };
 }
@@ -382,7 +382,7 @@ function renderScreens() {
     row.innerHTML = `<strong>${escapeHtml(screen.name)}</strong><em>${screen.slug}${project.flow.startScreenId === screen.id ? ' / start' : ''}</em>`;
     row.addEventListener('click', () => {
       editorState.selectedScreenId = screen.id;
-      editorState.selectedElementId = screen.elements.at(-1)?.id ?? null;
+      editorStore.selectElement(screen.elements.at(-1)?.id ?? null);
       editorState.selectedTransitionId = null;
       editorState.shouldCenterStage = true;
       render();
@@ -408,7 +408,7 @@ function renderFlow() {
     row.addEventListener('click', () => {
       editorState.selectedTransitionId = transition.id;
       editorState.selectedScreenId = transition.fromScreenId;
-      editorState.selectedElementId = transition.elementId;
+      editorStore.selectElement(transition.elementId);
       render();
     });
     flow.append(row);
@@ -429,8 +429,8 @@ function renderStage() {
   for (const element of activeScreen().elements) {
     if (element.visible) stage.append(renderElementSvg(element));
   }
-  const selected = getSelected();
-  if (selected) stage.append(renderSelection(selected));
+  const selected = getSelectedElements();
+  if (selected.length) stage.append(renderSelection(selected));
   if (editorState.dragState?.guides?.length) stage.append(renderSnapGuides(editorState.dragState.guides, project.device));
   if (editorState.shouldCenterStage || viewportChanged) {
     editorState.shouldCenterStage = false;
@@ -536,9 +536,14 @@ function renderElementSvg(element) {
   return group;
 }
 
-function renderSelection(element) {
+function renderSelection(elements) {
+  const bounds = elementBounds(elements);
+  if (!bounds) return svg('g', { class: 'selection' });
   const group = svg('g', { class: 'selection' });
-  group.append(svg('rect', { x: element.x, y: element.y, width: element.w, height: element.h, fill: 'transparent', stroke: '#ffffff', 'stroke-dasharray': '3 2' }));
+  const isMulti = elements.length > 1;
+  group.append(svg('rect', { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h, fill: 'transparent', stroke: '#ffffff', 'stroke-dasharray': '3 2', 'pointer-events': isMulti ? 'visibleStroke' : 'none', ...(isMulti ? { 'data-selection': 'multi' } : {}) }));
+  if (isMulti) return group;
+  const element = elements[0];
   [
     ['resize-nw', element.x, element.y],
     ['resize-ne', element.x + element.w, element.y],
@@ -580,12 +585,14 @@ function previewAnimationLoop(nowMs) {
 function renderLayers() {
   const layers = query('#layers');
   clear(layers);
+  const selectedIds = new Set(getSelectedIds());
   [...activeScreen().elements].reverse().forEach((element) => {
     const row = document.createElement('button');
-    row.className = `layer ${element.id === editorState.selectedElementId ? 'active' : ''}`;
+    row.className = `layer ${selectedIds.has(element.id) ? 'active' : ''}`;
     row.innerHTML = `<span>${element.visible ? '*' : '-'}</span><strong>${escapeHtml(element.name)}</strong><em>${element.type}</em>`;
-    row.addEventListener('click', () => {
-      editorState.selectedElementId = element.id;
+    row.addEventListener('click', (event) => {
+      if (event.shiftKey || event.ctrlKey || event.metaKey) editorStore.toggleElementSelection(element.id);
+      else editorStore.selectElement(element.id);
       render();
     });
     layers.append(row);
@@ -594,12 +601,17 @@ function renderLayers() {
 
 function renderInspector() {
   const inspector = query('#inspector');
-  const element = getSelected();
+  const selectedElements = getSelectedElements();
   clear(inspector);
-  if (!element) {
+  if (!selectedElements.length) {
     inspector.innerHTML = '<p class="muted">Select an element to edit its properties.</p>';
     return;
   }
+  if (selectedElements.length > 1) {
+    renderMultiSelectionInspector(inspector, selectedElements);
+    return;
+  }
+  const element = selectedElements[0];
   inspector.append(
     inputField('Name', 'text', element.name, (value) => change({ name: value })),
     inputField('X', 'number', element.x, (value) => change({ x: Number(value) })),
@@ -639,14 +651,28 @@ function renderInspector() {
 
   function change(patch) {
     commit(updateElement(project, editorState.selectedScreenId, element.id, patch));
-    editorState.selectedElementId = element.id;
+    editorStore.selectElement(element.id);
     render();
   }
   function changeProp(key, value) {
     commit(updateElement(project, editorState.selectedScreenId, element.id, { props: { [key]: value } }));
-    editorState.selectedElementId = element.id;
+    editorStore.selectElement(element.id);
     render();
   }
+}
+
+function renderMultiSelectionInspector(inspector, elements) {
+  const summary = document.createElement('p');
+  summary.className = 'muted';
+  summary.textContent = `${elements.length} elements selected`;
+
+  const actions = document.createElement('div');
+  actions.className = 'mini-actions';
+  actions.innerHTML = `
+    <button data-action="duplicate">Duplicate</button>
+    <button data-action="delete">Delete</button>
+  `;
+  inspector.append(summary, actions);
 }
 
 function renderFonts() {
@@ -699,13 +725,13 @@ function setElementEvent(element, trigger, toScreenId) {
   next = updateElement(next, editorState.selectedScreenId, element.id, { events: { [trigger]: toScreen ? toScreen.slug : '' } });
   if (toScreenId) next = addTransition(next, { fromScreenId: editorState.selectedScreenId, elementId: element.id, trigger, toScreenId });
   commit(cleanupFlow(next));
-  editorState.selectedElementId = element.id;
+  editorStore.selectElement(element.id);
   render();
 }
 
 function addNewElement(type) {
   commit(addElement(project, editorState.selectedScreenId, type));
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   render();
 }
 
@@ -716,7 +742,7 @@ async function importProject(file) {
     : parseDesignProject(raw);
   project = projectStore.replaceProject(imported);
   editorState.selectedScreenId = imported.flow.startScreenId;
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   await registerProjectFonts(project);
   render();
 }
@@ -756,14 +782,14 @@ function resetProject() {
   if (!confirm('Create a new project?')) return;
   project = projectStore.replaceProject(createProject());
   editorState.selectedScreenId = project.flow.startScreenId;
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   render();
 }
 
 function addNewScreen() {
   commit(addScreen(project));
   editorState.selectedScreenId = project.screens.at(-1).id;
-  editorState.selectedElementId = null;
+  editorStore.clearElementSelection();
   editorState.shouldCenterStage = true;
   render();
 }
@@ -771,7 +797,7 @@ function addNewScreen() {
 function duplicateActiveScreen() {
   commit(duplicateScreen(project, editorState.selectedScreenId));
   editorState.selectedScreenId = project.screens.at(-1).id;
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   editorState.shouldCenterStage = true;
   render();
 }
@@ -780,7 +806,7 @@ function deleteActiveScreen() {
   if (project.screens.length <= 1) return;
   commit(removeScreen(project, editorState.selectedScreenId));
   editorState.selectedScreenId = project.screens[0].id;
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   render();
 }
 
@@ -890,15 +916,16 @@ function onStageContextMenu(event) {
   event.stopPropagation();
   const element = activeScreen().elements.find((item) => item.id === id);
   if (!element) return;
-  editorState.selectedElementId = id;
+  if (!getSelectedIds().includes(id)) editorStore.selectElement(id);
   render();
-  showContextMenu(event.clientX, event.clientY, element);
+  showContextMenu(event.clientX, event.clientY, getSelectedElements());
 }
 
-function showContextMenu(clientX, clientY, element) {
+function showContextMenu(clientX, clientY, elements) {
+  const label = elements.length > 1 ? `${elements.length} elements selected` : escapeHtml(elements[0]?.name ?? 'Selection');
   const contextMenu = query('#context-menu');
   contextMenu.innerHTML = `
-    <strong>${escapeHtml(element.name)}</strong>
+    <strong>${label}</strong>
     <button data-action="context-duplicate">Duplicate</button>
     <button data-action="context-center">Center selected</button>
     <button data-action="context-delete" class="danger">Delete</button>
@@ -929,18 +956,53 @@ function normalizeColor(value) {
 function onPointerDown(event) {
   hideContextMenu();
   const target = event.target;
-  const handle = target.closest?.('[data-mode]');
+  const selectionNode = target.closest?.('[data-selection]');
+  if (selectionNode) {
+    startSelectionDrag(event);
+    return;
+  }
+  const handle = target.closest?.('.handle[data-mode]');
   const elementNode = target.closest?.('[data-id]');
   const id = handle?.dataset.id ?? elementNode?.dataset.id;
   if (!id) {
-    editorState.selectedElementId = null;
+    editorStore.clearElementSelection();
     render();
     return;
   }
   const element = activeScreen().elements.find((item) => item.id === id);
-  if (!element || element.locked) return;
-  editorState.selectedElementId = id;
-  editorState.dragState = { mode: handle?.dataset.mode ?? 'move', id, start: svgPoint(query('#stage'), event.clientX, event.clientY), original: structuredClone(element), guides: [] };
+  if (!element) return;
+  if (event.shiftKey || event.ctrlKey || event.metaKey) {
+    editorStore.toggleElementSelection(id);
+    render();
+    return;
+  }
+  if (!getSelectedIds().includes(id)) editorStore.selectElement(id);
+  if (element.locked) {
+    render();
+    return;
+  }
+  startSelectionDrag(event, handle?.dataset.mode ?? 'move', id);
+}
+
+function startSelectionDrag(event, mode = 'move', focusId = null) {
+  const selected = getSelectedElements();
+  const dragElements = (selected.length > 1 && mode === 'move' ? selected : selected.filter((element) => element.id === focusId))
+    .filter((element) => !element.locked);
+  if (!dragElements.length) {
+    render();
+    return;
+  }
+  const bounds = elementBounds(dragElements);
+  editorState.dragState = {
+    mode,
+    id: focusId ?? dragElements[0].id,
+    ids: dragElements.map((element) => element.id),
+    start: svgPoint(query('#stage'), event.clientX, event.clientY),
+    original: structuredClone(focusId ? dragElements.find((element) => element.id === focusId) ?? dragElements[0] : bounds),
+    originals: dragElements.map((element) => structuredClone(element)),
+    bounds,
+    guides: []
+  };
   query('#stage').setPointerCapture(event.pointerId);
   render();
 }
@@ -955,22 +1017,28 @@ function onPointerMove(event) {
   const dx = point.x - editorState.dragState.start.x;
   const dy = point.y - editorState.dragState.start.y;
   const o = editorState.dragState.original;
+  let nextProject = project;
   const patch = {};
   if (editorState.dragState.mode === 'move') {
-    const gridX = snap(o.x + dx, project.grid.size, project.grid.snap);
-    const gridY = snap(o.y + dy, project.grid.size, project.grid.snap);
+    const bounds = editorState.dragState.bounds ?? o;
+    const gridX = snap(bounds.x + dx, project.grid.size, project.grid.snap);
+    const gridY = snap(bounds.y + dy, project.grid.size, project.grid.snap);
     const smart = smartSnapMove({
-      element: o,
+      element: bounds,
       x: gridX,
       y: gridY,
       device: project.device,
-      elements: activeScreen().elements,
+      elements: activeScreen().elements.filter((element) => !editorState.dragState.ids.includes(element.id)),
       zoom: editorState.zoom,
       enabled: editorState.smartSnapEnabled
     });
-    patch.x = smart.x;
-    patch.y = smart.y;
+    const moveX = smart.x - bounds.x;
+    const moveY = smart.y - bounds.y;
     editorState.dragState.guides = smart.guides;
+    nextProject = updateElementsFromOriginals(editorState.dragState.originals, (element) => ({
+      x: element.x + moveX,
+      y: element.y + moveY
+    }));
   } else {
     editorState.dragState.guides = [];
     const right = o.x + o.w;
@@ -985,8 +1053,9 @@ function onPointerMove(event) {
     }
     if (editorState.dragState.mode.includes('e')) patch.w = snap(o.w + dx, project.grid.size, project.grid.snap);
     if (editorState.dragState.mode.includes('s')) patch.h = snap(o.h + dy, project.grid.size, project.grid.snap);
+    nextProject = updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch);
   }
-  project = projectStore.setProject(updateElement(project, editorState.selectedScreenId, editorState.dragState.id, patch), { capture: CAPTURE_MODE.ephemeral });
+  project = projectStore.setProject(nextProject, { capture: CAPTURE_MODE.ephemeral });
   renderStage();
   renderInspector();
 }
@@ -1019,8 +1088,23 @@ function getSelected() {
   return selectSelectedElement(project, editorState);
 }
 
+function getSelectedIds() {
+  return selectSelectedElementIds(project, editorState);
+}
+
+function getSelectedElements() {
+  return selectSelectedElements(project, editorState);
+}
+
 function activeScreen() {
   return selectActiveScreen(project, editorState);
+}
+
+function updateElementsFromOriginals(originals, patchForElement) {
+  return originals.reduce(
+    (nextProject, element) => updateElement(nextProject, editorState.selectedScreenId, element.id, patchForElement(element)),
+    project
+  );
 }
 
 function reconcileEditorSelection({ resetElement = false } = {}) {
@@ -1029,45 +1113,56 @@ function reconcileEditorSelection({ resetElement = false } = {}) {
     return;
   }
 
-  if (resetElement || !getSelected()) {
+  const selectedIds = getSelectedIds();
+  if (resetElement || !selectedIds.length) {
     editorStore.selectElement(firstElementId(project, editorState.selectedScreenId));
+    return;
   }
+  editorStore.selectElements(selectedIds);
 }
 
 function deleteSelected() {
-  if (!editorState.selectedElementId) return;
-  commit(removeElement(project, editorState.selectedScreenId, editorState.selectedElementId));
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? null;
+  const selectedIds = getSelectedIds();
+  if (!selectedIds.length) return;
+  commit(removeElements(project, editorState.selectedScreenId, selectedIds));
+  editorStore.selectElement(activeScreen().elements.at(-1)?.id ?? null);
   render();
 }
 
 function duplicateSelected() {
-  if (!editorState.selectedElementId) return;
-  commit(duplicateElement(project, editorState.selectedScreenId, editorState.selectedElementId));
-  editorState.selectedElementId = activeScreen().elements.at(-1)?.id ?? editorState.selectedElementId;
+  const selectedIds = getSelectedIds();
+  if (!selectedIds.length) return;
+  const beforeCount = activeScreen().elements.length;
+  commit(duplicateElements(project, editorState.selectedScreenId, selectedIds));
+  const duplicatedIds = activeScreen().elements.slice(beforeCount).map((element) => element.id);
+  editorStore.selectElements(duplicatedIds.length ? duplicatedIds : selectedIds);
   render();
 }
 
 function centerSelected() {
-  const element = getSelected();
-  if (!element) return;
-  commit(updateElement(project, editorState.selectedScreenId, element.id, { x: Math.round((project.device.width - element.w) / 2), y: Math.round((project.device.height - element.h) / 2) }));
+  const selected = getSelectedElements().filter((element) => !element.locked);
+  const bounds = elementBounds(selected);
+  if (!bounds) return;
+  const moveX = Math.round((project.device.width - bounds.w) / 2) - bounds.x;
+  const moveY = Math.round((project.device.height - bounds.h) / 2) - bounds.y;
+  commit(updateElementsFromOriginals(selected, (element) => ({ x: element.x + moveX, y: element.y + moveY })));
   render();
 }
 
 function nudge(key, amount) {
-  const element = getSelected();
-  if (!element || element.locked) return;
-  commit(updateElement(project, editorState.selectedScreenId, element.id, {
+  const selected = getSelectedElements().filter((element) => !element.locked);
+  if (!selected.length) return;
+  commit(updateElementsFromOriginals(selected, (element) => ({
     x: element.x + (key === 'ArrowLeft' ? -amount : key === 'ArrowRight' ? amount : 0),
     y: element.y + (key === 'ArrowUp' ? -amount : key === 'ArrowDown' ? amount : 0)
-  }));
+  })));
   render();
 }
 
 function moveSelectedLayer(direction) {
-  if (!editorState.selectedElementId) return;
-  commit(moveLayer(project, editorState.selectedScreenId, editorState.selectedElementId, direction));
+  const selectedIds = getSelectedIds();
+  if (selectedIds.length !== 1) return;
+  commit(moveLayer(project, editorState.selectedScreenId, selectedIds[0], direction));
   render();
 }
 

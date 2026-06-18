@@ -137,6 +137,13 @@ export function removeElement(project, screenId, id) {
   return cleanupFlow({ ...next, flow: { ...next.flow, transitions: next.flow.transitions.filter((transition) => transition.elementId !== id) } });
 }
 
+export function removeElements(project, screenId, ids) {
+  const idSet = new Set(ids);
+  if (!idSet.size) return project;
+  const next = updateScreenElements(project, screenId, (elements) => elements.filter((element) => !idSet.has(element.id)));
+  return cleanupFlow({ ...next, flow: { ...next.flow, transitions: next.flow.transitions.filter((transition) => !idSet.has(transition.elementId)) } });
+}
+
 export function duplicateElement(project, screenId, id) {
   const source = getElement(project, screenId, id);
   if (!source) return project;
@@ -146,6 +153,24 @@ export function duplicateElement(project, screenId, id) {
   clone.x += project.grid.size;
   clone.y += project.grid.size;
   return updateScreenElements(project, screenId, (elements) => [...elements, clampElementToDevice(clone, project.device)]);
+}
+
+export function duplicateElements(project, screenId, ids) {
+  const idSet = new Set(ids);
+  if (!idSet.size) return project;
+  return updateScreenElements(project, screenId, (elements) => {
+    const clones = elements
+      .filter((element) => idSet.has(element.id))
+      .map((source) => {
+        const clone = structuredClone(source);
+        clone.id = cryptoId(source.type);
+        clone.name = `${source.name} copy`;
+        clone.x += project.grid.size;
+        clone.y += project.grid.size;
+        return clampElementToDevice(clone, project.device);
+      });
+    return [...elements, ...clones];
+  });
 }
 
 export function moveLayer(project, screenId, id, direction) {
