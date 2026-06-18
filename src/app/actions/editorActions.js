@@ -107,7 +107,7 @@ export function registerEditorActions(registry, commands) {
       label: 'Duplicate',
       shortcut: 'mod+d',
       capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
+      canRun: (ctx) => ctx.hasEditableSelection(),
       run: () => commands.duplicateSelected()
     },
     {
@@ -306,29 +306,5 @@ export function registerEditorActions(registry, commands) {
       canRun: (ctx) => ctx.hasSelectedAsset(),
       run: () => commands.deleteSelectedAsset()
     },
-    {
-      id: 'context-duplicate',
-      label: 'Duplicate',
-      palette: false,
-      capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasSelection(),
-      run: () => commands.duplicateSelected()
-    },
-    {
-      id: 'context-center',
-      label: 'Center selected',
-      palette: false,
-      capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasEditableSelection(),
-      run: () => commands.centerSelected()
-    },
-    {
-      id: 'context-delete',
-      label: 'Delete',
-      palette: false,
-      capture: CAPTURE_MODE.immediate,
-      canRun: (ctx) => ctx.hasEditableSelection(),
-      run: () => commands.deleteSelected()
-    }
   ]);
 }

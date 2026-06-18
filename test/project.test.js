@@ -95,6 +95,31 @@ test('derives keyboard shortcut help and dispatch from registered actions', asyn
   assert.deepEqual(calls, ['prevented', 'palette']);
 });
 
+test('does not dispatch unavailable keyboard shortcuts', async () => {
+  const registry = createActionRegistry();
+  const calls = [];
+  registry.register({
+    id: 'delete',
+    label: 'Delete',
+    shortcut: 'delete/backspace',
+    canRun: (ctx) => ctx.canDelete,
+    run: () => calls.push('delete')
+  });
+
+  const event = {
+    key: 'Delete',
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    target: { closest: () => false },
+    preventDefault: () => calls.push('prevented')
+  };
+
+  assert.equal(await runKeyboardShortcut(event, registry, { canDelete: false }), false);
+  assert.deepEqual(calls, []);
+});
+
 test('registers core layout and layer actions', () => {
   const registry = createActionRegistry();
   registerEditorActions(registry, {
@@ -127,6 +152,8 @@ test('registers core layout and layer actions', () => {
     'lock',
     'unlock'
   ].forEach((id) => assert.ok(registry.get(id), `${id} should be registered`));
+  assert.equal(registry.canRun('duplicate', { hasEditableSelection: () => false }), false);
+  assert.equal(registry.canRun('duplicate', { hasEditableSelection: () => true }), true);
 });
 
 test('keeps project and editor state stores separate', () => {
@@ -282,6 +309,20 @@ test('multi-element project operations capture as one undoable change', () => {
   assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === first.id), false);
   assert.equal(projectStore.getProject().screens[0].elements.some((element) => element.id === second.id), false);
   assert.equal(projectStore.undo().screens[0].elements.some((element) => element.id === first.id), true);
+});
+
+test('does not duplicate locked elements', () => {
+  let project = createProject();
+  const screenId = project.flow.startScreenId;
+  const [first, second] = project.screens[0].elements;
+  project = updateElement(project, screenId, second.id, { locked: true });
+
+  const unchanged = duplicateElements(project, screenId, [second.id]);
+  assert.equal(unchanged, project);
+
+  const duplicated = duplicateElements(project, screenId, [first.id, second.id]);
+  assert.equal(duplicated.screens[0].elements.length, project.screens[0].elements.length + 1);
+  assert.equal(duplicated.screens[0].elements.at(-1).name, `${first.name} copy`);
 });
 
 test('aligns and distributes selected elements', () => {

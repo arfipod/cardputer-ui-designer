@@ -146,7 +146,7 @@ export function removeElements(project, screenId, ids) {
 
 export function duplicateElement(project, screenId, id) {
   const source = getElement(project, screenId, id);
-  if (!source) return project;
+  if (!source || source.locked) return project;
   const clone = structuredClone(source);
   clone.id = cryptoId(source.type);
   clone.name = `${source.name} copy`;
@@ -158,9 +158,11 @@ export function duplicateElement(project, screenId, id) {
 export function duplicateElements(project, screenId, ids) {
   const idSet = new Set(ids);
   if (!idSet.size) return project;
+  const screen = getScreen(project, screenId);
+  if (!screen.elements.some((element) => idSet.has(element.id) && !element.locked)) return project;
   return updateScreenElements(project, screenId, (elements) => {
     const clones = elements
-      .filter((element) => idSet.has(element.id))
+      .filter((element) => idSet.has(element.id) && !element.locked)
       .map((source) => {
         const clone = structuredClone(source);
         clone.id = cryptoId(source.type);

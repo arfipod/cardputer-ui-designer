@@ -10,13 +10,15 @@ The app is calibrated for the official Cardputer-Adv display size, 240 x 135 px 
 - Optional portrait preset.
 - Project model with multiple screens.
 - Flow transitions between screens.
-- Add, move, resize, duplicate and delete elements.
+- Add, move, resize, duplicate and delete elements, including multi-selection for batch edits.
 - Screen panel with add, duplicate, rename, delete and start-screen controls.
-- Layers panel with front/back/up/down controls.
+- Layers panel with visibility, locking and front/back/up/down controls.
 - Inspector for position, size, colors, text, progress values, icon type, sparkline points and navigation events.
 - TTF upload with browser preview and bitmap-font firmware export variants.
-- Grid, snap and zoom controls.
+- Grid, smart alignment guides, snap and zoom controls.
 - Undo/redo history.
+- Central command palette and shortcut dialog for discoverable editor actions.
+- Context menu and toolbar actions share the same command registry where possible.
 - Local browser autosave through IndexedDB, with localStorage fallback.
 - Import/export project JSON.
 - Export/import LVGL-style XML text bundles with `cu:` metadata for round-trip data.
@@ -70,7 +72,7 @@ http://localhost:4173
 npm test
 ```
 
-The tests use the built-in Node test runner and cover project creation, migration, flow, storage and code generation.
+The tests use the built-in Node test runner and cover project creation, migration, flow, storage, editor action dispatch, history behavior, snapping, multi-selection helpers and code generation.
 
 ## Cardputer Adv Hardware Upload
 

@@ -8,9 +8,11 @@ export async function runKeyboardShortcut(event, registry, ctx) {
   if (!shortcut) return false;
 
   if (event.target?.closest?.(EDITABLE_SELECTOR) && !GLOBAL_SHORTCUT_ACTIONS.has(shortcut.id)) return false;
+  const actionContext = { ...ctx, payload: shortcut.payload };
+  if (!registry.canRun(shortcut.id, actionContext)) return false;
 
   event.preventDefault();
-  await registry.run(shortcut.id, { ...ctx, payload: shortcut.payload });
+  await registry.run(shortcut.id, actionContext);
   return true;
 }
 

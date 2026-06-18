@@ -1286,9 +1286,9 @@ function showContextMenu(clientX, clientY, elements) {
     <button data-action="layer-back">Send to back</button>
     <button data-action="lock">Lock</button>
     <button data-action="unlock">Unlock</button>
-    <button data-action="context-duplicate">Duplicate</button>
-    <button data-action="context-center">Center selected</button>
-    <button data-action="context-delete" class="danger">Delete</button>
+    <button data-action="duplicate">Duplicate</button>
+    <button data-action="center">Center selected</button>
+    <button data-action="delete" class="danger">Delete</button>
   `;
   contextMenu.hidden = false;
   refreshActionButtons(contextMenu);
@@ -1682,7 +1682,7 @@ function deleteSelected() {
 }
 
 function duplicateSelected() {
-  const selectedIds = getSelectedIds();
+  const selectedIds = getEditableSelectedElements().map((element) => element.id);
   if (!selectedIds.length) return;
   const beforeCount = activeScreen().elements.length;
   commit(duplicateElements(project, editorState.selectedScreenId, selectedIds));
