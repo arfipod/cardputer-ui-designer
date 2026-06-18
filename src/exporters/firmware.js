@@ -95,7 +95,7 @@ function exportSource(project) {
     lines.push(`static void draw_${safeIdentifier(screen.slug)}() {`);
     lines.push('  if (!ui_display) return;');
     lines.push('  auto& display = *ui_display;');
-    lines.push('  display.clear(CardputerDisplay::rgb565(0, 0, 0));');
+    lines.push('  display.clear(CardputerDisplay::rgb565(5, 7, 11));');
     lines.push('');
     for (const element of screen.elements.filter((item) => item.visible)) lines.push(...renderElement(project, element));
     lines.push('}', '');

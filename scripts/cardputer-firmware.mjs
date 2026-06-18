@@ -94,6 +94,10 @@ async function prepare(options = {}, log = console.log) {
 function loadProject(projectPath, projectRaw) {
   if (projectRaw) return parseDesignProject(projectRaw);
   if (!projectPath) {
+    if (existsSync(defaultProjectPath)) {
+      console.log(`No project JSON provided; using ${relative(defaultProjectPath)}.`);
+      return parseDesignProject(readFileSync(defaultProjectPath, 'utf8'));
+    }
     const project = createProject();
     console.log('No project JSON provided; using the default designer project.');
     return project;

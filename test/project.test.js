@@ -109,6 +109,7 @@ test('exports multi-screen vanilla firmware and LVGL-style XML', async () => {
   assert.doesNotMatch(firmware.files['cardputer_ui.h'], /M5GFX|LGFX/);
   assert.match(firmware.files['cardputer_ui.cpp'], /CardputerTransition/);
   assert.match(firmware.files['cardputer_ui.cpp'], /esp_timer_get_time/);
+  assert.match(firmware.files['cardputer_ui.cpp'], /display\.clear\(CardputerDisplay::rgb565\(5, 7, 11\)\)/);
   assert.match(firmware.files['cardputer_ui.cpp'], /drawRect\(20, 70, 196, 16/);
   assert.match(xml.files['project.xml'], /cu:flow/);
   assert.ok(xml.files['screens/main.xml']);

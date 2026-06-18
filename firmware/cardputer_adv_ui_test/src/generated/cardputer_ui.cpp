@@ -19,7 +19,7 @@ static const CardputerTransition transitions[] = {
 static void draw_main() {
   if (!ui_display) return;
   auto& display = *ui_display;
-  display.clear(CardputerDisplay::rgb565(0, 0, 0));
+  display.clear(CardputerDisplay::rgb565(5, 7, 11));
 
   // Panel (roundRect) id=panel-1
   display.fillRoundRect(12, 38, 216, 72, 8, CardputerDisplay::rgb565(17, 24, 39));

@@ -96,11 +96,13 @@ Build the default generated UI firmware:
 npm run firmware:build
 ```
 
-Upload the default generated UI firmware to the connected Cardputer Adv:
+Upload the last generated UI firmware to the connected Cardputer Adv:
 
 ```bash
 npm run firmware:upload
 ```
+
+Without a project path, the CLI reuses `firmware/cardputer_adv_ui_test/generated-project.cardputer-ui.json` when it exists. This is the same project file written by the web designer build/upload flow. If that file is not present, the CLI falls back to the built-in demo project.
 
 Compile and upload in one CLI command:
 
