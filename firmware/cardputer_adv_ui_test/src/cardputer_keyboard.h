@@ -1,6 +1,5 @@
 #pragma once
 
-#include "driver/i2c_master.h"
 #include <stdint.h>
 
 enum class CardputerKey {
@@ -10,6 +9,17 @@ enum class CardputerKey {
   Right,
   Up,
   Down,
+  DeleteForward,
+  F1,
+  F2,
+  F3,
+  F4,
+  F5,
+  F6,
+  F7,
+  F8,
+  F9,
+  F10,
   Enter,
   Esc,
   Backspace,
@@ -41,8 +51,13 @@ class CardputerKeyboard {
   bool begin();
   bool readEvent(CardputerKeyEvent* event);
   CardputerKey readKey();
+  bool isPressed(CardputerKey key) const;
+  bool isCharacterPressed(char character) const;
+  uint8_t pressedCount() const;
   bool isReady() const { return initialized_; }
+  const char* diagnostic() const { return diagnostic_; }
   const char* keyName(const CardputerKeyEvent& event) const;
+  static const char* keyName(CardputerKey key, char character = '\0');
 
  private:
   struct KeyPosition {
@@ -52,7 +67,8 @@ class CardputerKeyboard {
 
   bool writeRegister(uint8_t reg, uint8_t value);
   bool readRegister(uint8_t reg, uint8_t* value);
-  void scanBus();
+  void setDiagnostic(const char* message);
+  void scanBus(char* out, size_t outSize);
   uint8_t available();
   uint8_t getEvent();
   void flush();
@@ -64,9 +80,10 @@ class CardputerKeyboard {
   CardputerKey mapFnKey(KeyPosition position) const;
   uint8_t keyValue(KeyPosition position, bool shifted) const;
   bool isPositionPressed(uint8_t row, uint8_t col) const;
+  bool findKeyPosition(CardputerKey key, char character, KeyPosition* position) const;
 
   bool initialized_ = false;
+  char diagnostic_[48] = "not started";
   bool pressed_[4][14] = {};
-  i2c_master_bus_handle_t bus_ = nullptr;
-  i2c_master_dev_handle_t device_ = nullptr;
+  bool busInstalled_ = false;
 };

@@ -9,6 +9,7 @@
 
 #include "cardputer_display.h"
 #include "cardputer_keyboard.h"
+#include "cardputer_ui_input.h"
 #include "generated/cardputer_ui.h"
 #include "widgets/widget_gallery.h"
 
@@ -42,6 +43,29 @@ struct UiInputMessage {
 };
 
 static QueueHandle_t ui_input_queue = nullptr;
+static portMUX_TYPE keyboard_diag_mux = portMUX_INITIALIZER_UNLOCKED;
+
+struct KeyboardDiagState {
+  char text[48];
+  bool ready;
+};
+
+static KeyboardDiagState keyboard_diag = { "kbd: starting", false };
+
+static void set_keyboard_diag(const char* text, bool ready) {
+  portENTER_CRITICAL(&keyboard_diag_mux);
+  snprintf(keyboard_diag.text, sizeof(keyboard_diag.text), "%s", text);
+  keyboard_diag.ready = ready;
+  portEXIT_CRITICAL(&keyboard_diag_mux);
+}
+
+static KeyboardDiagState get_keyboard_diag() {
+  KeyboardDiagState copy = {};
+  portENTER_CRITICAL(&keyboard_diag_mux);
+  copy = keyboard_diag;
+  portEXIT_CRITICAL(&keyboard_diag_mux);
+  return copy;
+}
 
 static bool send_ui_event(CardputerUiEvent event) {
   if (ui_input_queue == nullptr) return false;
@@ -64,41 +88,42 @@ static bool request_display_mode(DisplayMode mode) {
   return xQueueSend(ui_input_queue, &message, pdMS_TO_TICKS(10)) == pdTRUE;
 }
 
-static bool map_key_to_ui_events(const CardputerKeyEvent& keyEvent) {
-  if (!keyEvent.pressed) return false;
-
-  switch (keyEvent.key) {
-    case CardputerKey::Left:
-      return send_ui_event(CARDPUTER_UI_EVENT_SOFTKEY_LEFT);
-    case CardputerKey::Right:
-      return send_ui_event(CARDPUTER_UI_EVENT_SOFTKEY_RIGHT);
-    case CardputerKey::Enter:
-    case CardputerKey::Space:
-      send_ui_event(CARDPUTER_UI_EVENT_KEY_ENTER);
-      return send_ui_event(CARDPUTER_UI_EVENT_PRESS);
-    case CardputerKey::Esc:
-    case CardputerKey::Backspace:
-      return send_ui_event(CARDPUTER_UI_EVENT_KEY_BACK);
-    default:
-      return false;
-  }
-}
-
 static void input_task(void*) {
   CardputerKeyboard keyboard;
   const bool keyboardReady = keyboard.begin();
 
   if (!keyboardReady) {
     ESP_LOGW(TAG, "Keyboard init failed; UI will run without input");
+    set_keyboard_diag(keyboard.diagnostic(), false);
   } else {
     ESP_LOGI(TAG, "Keyboard task ready");
+    set_keyboard_diag("kbd: ready", true);
   }
 
   for (;;) {
     if (keyboardReady) {
       CardputerKeyEvent keyEvent;
       while (keyboard.readEvent(&keyEvent)) {
-        if (map_key_to_ui_events(keyEvent)) {
+        char diag[48] = {};
+        snprintf(diag,
+                 sizeof(diag),
+                 "%s %s r%u c%u raw%02X %c%c%c%c%c",
+                 keyEvent.pressed ? "dn" : "up",
+                 keyboard.keyName(keyEvent),
+                 keyEvent.row,
+                 keyEvent.col,
+                 keyEvent.raw,
+                 keyEvent.fn ? 'F' : '-',
+                 keyEvent.shift ? 'S' : '-',
+                 keyEvent.ctrl ? 'C' : '-',
+                 keyEvent.alt ? 'A' : '-',
+                 keyEvent.opt ? 'O' : '-');
+        set_keyboard_diag(diag, true);
+        CardputerUiInputEvent firstEvent = {};
+        CardputerUiInputEvent secondEvent = {};
+        if (CardputerUiInputMapper::mapKeyEvent(keyEvent, &firstEvent, &secondEvent)) {
+          if (firstEvent.valid) send_ui_event(firstEvent.event);
+          if (secondEvent.valid) send_ui_event(secondEvent.event);
           ESP_LOGI(TAG, "input key=%s raw=0x%02x", keyboard.keyName(keyEvent), keyEvent.raw);
         }
       }
@@ -171,6 +196,14 @@ static void draw_mode(CardputerDisplay& display, DisplayMode mode, CardputerScre
   }
 }
 
+static void draw_keyboard_diag(CardputerDisplay& display) {
+  const KeyboardDiagState diag = get_keyboard_diag();
+  const uint16_t bg = diag.ready ? CardputerDisplay::rgb565(6, 31, 22) : CardputerDisplay::rgb565(40, 15, 16);
+  const uint16_t fg = diag.ready ? CardputerDisplay::rgb565(155, 255, 183) : CardputerDisplay::rgb565(255, 180, 180);
+  display.fillRect(0, 0, CardputerDisplay::WIDTH, 10, bg);
+  display.drawText(diag.text, 2, 1, fg, 1);
+}
+
 static void display_task(void*) {
   CardputerDisplay display;
   if (!display.begin()) {
@@ -184,6 +217,8 @@ static void display_task(void*) {
   CardputerScreenId currentScreen = CARDPUTER_UI_START_SCREEN;
   DisplayMode displayMode = DisplayMode::GeneratedUi;
   draw_mode(display, displayMode, currentScreen);
+  draw_keyboard_diag(display);
+  display.flush();
   ESP_LOGI(TAG, "UI runtime ready display=%dx%d start_screen=%d",
            CardputerDisplay::WIDTH,
            CardputerDisplay::HEIGHT,
@@ -195,6 +230,8 @@ static void display_task(void*) {
     if (xQueueReceive(ui_input_queue, &message, pdMS_TO_TICKS(DISPLAY_FRAME_MS)) == pdTRUE) {
       if (message.type == UiMessageType::DumpFramebuffer) {
         draw_mode(display, displayMode, currentScreen);
+        draw_keyboard_diag(display);
+        display.flush();
         ESP_LOGI(TAG, "Dumping framebuffer order=%s", message.dumpOrder == CardputerFramebufferDumpOrder::NativePanel ? "native_panel" : "logical");
         display.dumpFramebuffer(stdout, message.dumpOrder);
         continue;
@@ -204,6 +241,8 @@ static void display_task(void*) {
         displayMode = DisplayMode::WidgetGallery;
         ESP_LOGI(TAG, "display mode=widget gallery");
         draw_mode(display, displayMode, currentScreen);
+        draw_keyboard_diag(display);
+        display.flush();
         continue;
       }
 
@@ -211,6 +250,8 @@ static void display_task(void*) {
         displayMode = DisplayMode::GeneratedUi;
         ESP_LOGI(TAG, "display mode=generated UI");
         draw_mode(display, displayMode, currentScreen);
+        draw_keyboard_diag(display);
+        display.flush();
         continue;
       }
 
@@ -222,11 +263,15 @@ static void display_task(void*) {
                  static_cast<int>(message.event));
         currentScreen = nextScreen;
         draw_mode(display, displayMode, currentScreen);
+        draw_keyboard_diag(display);
+        display.flush();
       }
       continue;
     }
 
     draw_mode(display, displayMode, currentScreen);
+    draw_keyboard_diag(display);
+    display.flush();
     if ((++idleTicks % 125) == 0) {
       ESP_LOGI(TAG, "UI alive screen=%d", static_cast<int>(currentScreen));
     }

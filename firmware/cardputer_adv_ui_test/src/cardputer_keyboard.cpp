@@ -4,10 +4,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include "driver/i2c.h"
+#include <stdio.h>
+#include <string.h>
 
 static const char* TAG = "cardputer_keyboard";
 
-static constexpr i2c_port_num_t I2C_PORT = I2C_NUM_0;
+static constexpr i2c_port_t I2C_PORT = I2C_NUM_0;
 static constexpr gpio_num_t I2C_SDA = GPIO_NUM_8;
 static constexpr gpio_num_t I2C_SCL = GPIO_NUM_9;
 static constexpr gpio_num_t TCA8418_INT = GPIO_NUM_11;
@@ -70,44 +73,40 @@ static constexpr KeyMapEntry KEY_MAP[4][14] = {
 
 bool CardputerKeyboard::begin() {
   if (initialized_) return true;
+  setDiagnostic("creating i2c bus");
 
-  i2c_master_bus_config_t busConfig = {};
-  busConfig.i2c_port = I2C_PORT;
+  i2c_config_t busConfig = {};
+  busConfig.mode = I2C_MODE_MASTER;
   busConfig.sda_io_num = I2C_SDA;
   busConfig.scl_io_num = I2C_SCL;
-  busConfig.clk_source = I2C_CLK_SRC_DEFAULT;
-  busConfig.glitch_ignore_cnt = 7;
-  busConfig.flags.enable_internal_pullup = true;
+  busConfig.sda_pullup_en = GPIO_PULLUP_ENABLE;
+  busConfig.scl_pullup_en = GPIO_PULLUP_ENABLE;
+  busConfig.master.clk_speed = 100000;
+  busConfig.clk_flags = 0;
 
-  if (bus_ == nullptr) {
-    esp_err_t err = i2c_new_master_bus(&busConfig, &bus_);
-    if (err == ESP_ERR_INVALID_STATE) {
-      err = i2c_master_get_bus_handle(I2C_PORT, &bus_);
-    }
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "i2c bus setup failed: %s", esp_err_to_name(err));
-      return false;
-    }
+  esp_err_t err = i2c_param_config(I2C_PORT, &busConfig);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(err));
+    snprintf(diagnostic_, sizeof(diagnostic_), "param failed %s", esp_err_to_name(err));
+    return false;
   }
 
-  if (device_ == nullptr) {
-    i2c_device_config_t deviceConfig = {};
-    deviceConfig.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    deviceConfig.device_address = TCA8418_ADDR;
-    deviceConfig.scl_speed_hz = 400000;
-
-    esp_err_t err = i2c_master_bus_add_device(bus_, &deviceConfig, &device_);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "i2c device setup failed: %s", esp_err_to_name(err));
-      scanBus();
-      return false;
-    }
+  err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+  if (err == ESP_ERR_INVALID_STATE) {
+    busInstalled_ = true;
+  } else if (err != ESP_OK) {
+    ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(err));
+    snprintf(diagnostic_, sizeof(diagnostic_), "install failed %s", esp_err_to_name(err));
+    return false;
+  } else {
+    busInstalled_ = true;
   }
 
+  setDiagnostic("reading tca8418");
   uint8_t cfg = 0;
   if (!readRegister(REG_CFG, &cfg)) {
     ESP_LOGE(TAG, "TCA8418 not found at 0x%02x", TCA8418_ADDR);
-    scanBus();
+    scanBus(diagnostic_, sizeof(diagnostic_));
     return false;
   }
 
@@ -121,6 +120,7 @@ bool CardputerKeyboard::begin() {
 
   // Same TCA8418 setup path used by M5Cardputer/Adafruit_TCA8418:
   // default GPIO inputs, GPI event/interrupt mode configured, then 7x8 keypad matrix.
+  setDiagnostic("configuring tca8418");
   if (!writeRegister(REG_GPIO_DIR_1, 0x00) ||
       !writeRegister(REG_GPIO_DIR_2, 0x00) ||
       !writeRegister(REG_GPIO_DIR_3, 0x00) ||
@@ -172,6 +172,7 @@ bool CardputerKeyboard::begin() {
            kp1,
            kp2,
            kp3);
+  setDiagnostic("ready");
   return true;
 }
 
@@ -205,11 +206,15 @@ CardputerKey CardputerKeyboard::readKey() {
 }
 
 const char* CardputerKeyboard::keyName(const CardputerKeyEvent& event) const {
+  return keyName(event.key, event.character);
+}
+
+const char* CardputerKeyboard::keyName(CardputerKey key, char character) {
   static char characterName[8];
 
-  switch (event.key) {
+  switch (key) {
     case CardputerKey::Character:
-      characterName[0] = event.character ? event.character : '?';
+      characterName[0] = character ? character : '?';
       characterName[1] = '\0';
       return characterName;
     case CardputerKey::Left:
@@ -220,6 +225,28 @@ const char* CardputerKeyboard::keyName(const CardputerKeyEvent& event) const {
       return "Up";
     case CardputerKey::Down:
       return "Down";
+    case CardputerKey::DeleteForward:
+      return "Delete";
+    case CardputerKey::F1:
+      return "F1";
+    case CardputerKey::F2:
+      return "F2";
+    case CardputerKey::F3:
+      return "F3";
+    case CardputerKey::F4:
+      return "F4";
+    case CardputerKey::F5:
+      return "F5";
+    case CardputerKey::F6:
+      return "F6";
+    case CardputerKey::F7:
+      return "F7";
+    case CardputerKey::F8:
+      return "F8";
+    case CardputerKey::F9:
+      return "F9";
+    case CardputerKey::F10:
+      return "F10";
     case CardputerKey::Enter:
       return "Enter";
     case CardputerKey::Esc:
@@ -247,25 +274,38 @@ const char* CardputerKeyboard::keyName(const CardputerKeyEvent& event) const {
 
 bool CardputerKeyboard::writeRegister(uint8_t reg, uint8_t value) {
   const uint8_t data[2] = {reg, value};
-  return i2c_master_transmit(device_, data, sizeof(data), pdMS_TO_TICKS(50)) == ESP_OK;
+  return i2c_master_write_to_device(I2C_PORT, TCA8418_ADDR, data, sizeof(data), pdMS_TO_TICKS(50)) == ESP_OK;
 }
 
 bool CardputerKeyboard::readRegister(uint8_t reg, uint8_t* value) {
-  return i2c_master_transmit_receive(device_, &reg, 1, value, 1, pdMS_TO_TICKS(50)) == ESP_OK;
+  return i2c_master_write_read_device(I2C_PORT, TCA8418_ADDR, &reg, 1, value, 1, pdMS_TO_TICKS(50)) == ESP_OK;
 }
 
-void CardputerKeyboard::scanBus() {
-  if (bus_ == nullptr) return;
+void CardputerKeyboard::setDiagnostic(const char* message) {
+  snprintf(diagnostic_, sizeof(diagnostic_), "%s", message ? message : "");
+}
 
+void CardputerKeyboard::scanBus(char* out, size_t outSize) {
   bool found = false;
+  size_t used = 0;
+  if (out != nullptr && outSize > 0) {
+    used = snprintf(out, outSize, "i2c:");
+  }
   for (uint8_t addr = 0x08; addr < 0x78; ++addr) {
-    if (i2c_master_probe(bus_, addr, pdMS_TO_TICKS(20)) == ESP_OK) {
+    uint8_t dummy = 0;
+    if (i2c_master_write_read_device(I2C_PORT, addr, &dummy, 1, &dummy, 1, pdMS_TO_TICKS(20)) == ESP_OK) {
       ESP_LOGI(TAG, "i2c device found at 0x%02x", addr);
+      if (out != nullptr && used < outSize) {
+        used += snprintf(out + used, outSize - used, " %02X", addr);
+      }
       found = true;
     }
   }
   if (!found) {
     ESP_LOGW(TAG, "i2c scan found no devices on GPIO%d/GPIO%d", I2C_SDA, I2C_SCL);
+    if (out != nullptr && outSize > 0) {
+      snprintf(out, outSize, "i2c: none");
+    }
   }
 }
 
@@ -399,6 +439,11 @@ CardputerKey CardputerKeyboard::mapKey(KeyPosition position, char* character) co
 
 CardputerKey CardputerKeyboard::mapFnKey(KeyPosition position) const {
   if (position.row == 0 && position.col == 0) return CardputerKey::Esc;
+  if (position.row == 0 && position.col >= 1 && position.col <= 9) {
+    return static_cast<CardputerKey>(static_cast<int>(CardputerKey::F1) + position.col - 1);
+  }
+  if (position.row == 0 && position.col == 10) return CardputerKey::F10;
+  if (position.row == 0 && position.col == 13) return CardputerKey::DeleteForward;
   if (position.row == 2 && position.col == 11) return CardputerKey::Up;
   if (position.row == 3 && position.col == 10) return CardputerKey::Left;
   if (position.row == 3 && position.col == 11) return CardputerKey::Down;
@@ -414,4 +459,73 @@ uint8_t CardputerKeyboard::keyValue(KeyPosition position, bool shifted) const {
 bool CardputerKeyboard::isPositionPressed(uint8_t row, uint8_t col) const {
   if (row >= 4 || col >= 14) return false;
   return pressed_[row][col];
+}
+
+bool CardputerKeyboard::isPressed(CardputerKey key) const {
+  KeyPosition position = {};
+  if (!findKeyPosition(key, '\0', &position)) return false;
+  return isPositionPressed(position.row, position.col);
+}
+
+bool CardputerKeyboard::isCharacterPressed(char character) const {
+  KeyPosition position = {};
+  if (!findKeyPosition(CardputerKey::Character, character, &position)) return false;
+  return isPositionPressed(position.row, position.col);
+}
+
+uint8_t CardputerKeyboard::pressedCount() const {
+  uint8_t count = 0;
+  for (uint8_t row = 0; row < 4; ++row) {
+    for (uint8_t col = 0; col < 14; ++col) {
+      if (pressed_[row][col]) ++count;
+    }
+  }
+  return count;
+}
+
+bool CardputerKeyboard::findKeyPosition(CardputerKey key, char character, KeyPosition* position) const {
+  if (position == nullptr) return false;
+
+  if (key == CardputerKey::Left) {
+    *position = {3, 10};
+    return true;
+  }
+  if (key == CardputerKey::Down) {
+    *position = {3, 11};
+    return true;
+  }
+  if (key == CardputerKey::Right) {
+    *position = {3, 12};
+    return true;
+  }
+  if (key == CardputerKey::Up) {
+    *position = {2, 11};
+    return true;
+  }
+  if (key == CardputerKey::Esc) {
+    *position = {0, 0};
+    return true;
+  }
+  if (key == CardputerKey::DeleteForward || key == CardputerKey::Backspace) {
+    *position = {0, 13};
+    return true;
+  }
+  if (key >= CardputerKey::F1 && key <= CardputerKey::F10) {
+    const int index = static_cast<int>(key) - static_cast<int>(CardputerKey::F1);
+    *position = {0, static_cast<uint8_t>(index == 9 ? 10 : index + 1)};
+    return true;
+  }
+
+  for (uint8_t row = 0; row < 4; ++row) {
+    for (uint8_t col = 0; col < 14; ++col) {
+      const KeyPosition candidate = {row, col};
+      char mappedCharacter = '\0';
+      const CardputerKey mapped = mapKey(candidate, &mappedCharacter);
+      if (mapped == key && (key != CardputerKey::Character || mappedCharacter == character)) {
+        *position = candidate;
+        return true;
+      }
+    }
+  }
+  return false;
 }
